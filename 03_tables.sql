@@ -215,3 +215,12 @@ CREATE TABLE IF NOT EXISTS MASKING_POLICY_TEMPLATES (
 )COMMENT='Pre-built masking policy templates for common data types and patterns.';
 
 SELECT 'Step 3 complete: All tables and sequences created.' AS STATUS;
+-- PRISM Settings (stores deployment configuration)
+CREATE TABLE IF NOT EXISTS PRISM_SETTINGS (
+    SETTING_KEY     VARCHAR(100) NOT NULL,
+    SETTING_VALUE   VARCHAR(500) NOT NULL,
+    DESCRIPTION     VARCHAR(500),
+    UPDATED_AT      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    UPDATED_BY      VARCHAR(256) DEFAULT 'SYSTEM',
+    CONSTRAINT PK_PRISM_SETTINGS PRIMARY KEY (SETTING_KEY)
+);

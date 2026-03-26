@@ -9,19 +9,42 @@ from datetime import datetime, timedelta
 
 ABOUT = "About PRISM"
 
-# Configuration dictionary
+# Configuration - loaded dynamically from PRISM_SETTINGS table
+def load_config_from_db():
+    """Load CONFIG from PRISM_SETTINGS table. Falls back to defaults if not available."""
+    defaults = {
+        "SECURITY_DB": "SECURITY_UNDER_DEVELOPMENT",
+        "SECURITY_SCHEMA": "ACCESS_CONTROL",
+        "OPERATIONS_DB": "OPERATIONS_UNDER_DEVELOPMENT",
+        "OPERATIONS_SCHEMA": "LOGS",
+        "HORIZON_DB": "HORIZON",
+        "WAREHOUSE": "COMPUTE_WH",
+        "APP_ROLE": "PRISM_APP_ROLE",
+        "GOV_ROLE": "PRISM_GOV_ROLE",
+        "VERSION": "2.0.0",
+    }
+    try:
+        rows = session.sql("SELECT SETTING_KEY, SETTING_VALUE FROM PRISM_SETTINGS").collect()
+        for r in rows:
+            defaults[r[0]] = r[1]
+    except:
+        pass
+    return defaults
+
+PRISM_CFG = load_config_from_db()
+
 CONFIG = {
     "APP": {
         "TITLE": "Portal for Role Integration, Security & Management",
         "LOGO_URL": "NTT-Data-Logo.png"
     },
     "DATABASE": {
-        "NAME": "SECURITY_UNDER_DEVELOPMENT",  # Change this for your environment
-        "SCHEMA": "ACCESS_CONTROL"  # Change this for your environment
+        "NAME": PRISM_CFG.get("SECURITY_DB", "SECURITY_UNDER_DEVELOPMENT"),
+        "SCHEMA": PRISM_CFG.get("SECURITY_SCHEMA", "ACCESS_CONTROL")
     },
     "AUDIT_DATABASE": {
-        "NAME": "OPERATIONS_UNDER_DEVELOPMENT",  # Change this for your environment
-        "SCHEMA": "LOGS"  # Change this for your environment
+        "NAME": PRISM_CFG.get("OPERATIONS_DB", "OPERATIONS_UNDER_DEVELOPMENT"),
+        "SCHEMA": PRISM_CFG.get("OPERATIONS_SCHEMA", "LOGS")
     },
     "TABLES": {
         "ENVIRONMENTS": "ENVIRONMENTS",
@@ -37,26 +60,27 @@ CONFIG = {
         "ENVIRONMENT_ROLE_METADATA": "ENVIRONMENT_ROLE_METADATA"
     },
     "HORIZON": {
-        "DATABASE": "HORIZON",
+        "DATABASE": PRISM_CFG.get("HORIZON_DB", "HORIZON"),
         "TAGS_SCHEMA": "TAGS",
         "POLICIES_SCHEMA": "POLICIES",
         "AUDIT_SCHEMA": "AUDIT",
-        "TAG_REGISTRY": "HORIZON.TAGS.TAG_REGISTRY",
-        "POLICY_REGISTRY": "HORIZON.POLICIES.POLICY_REGISTRY",
-        "MASKING_TEMPLATES": "HORIZON.POLICIES.MASKING_POLICY_TEMPLATES",
-        "GOV_AUDIT_LOG": "HORIZON.AUDIT.GOV_AUDIT_LOG",
-        "SP_CREATE_TAG": "HORIZON.TAGS.SP_GOV_CREATE_TAG",
-        "SP_APPLY_TAG": "HORIZON.TAGS.SP_GOV_APPLY_TAG",
-        "SP_CREATE_MASKING": "HORIZON.POLICIES.SP_GOV_CREATE_MASKING_POLICY",
-        "SP_APPLY_MASKING": "HORIZON.POLICIES.SP_GOV_APPLY_MASKING_POLICY"
+        "TAG_REGISTRY": PRISM_CFG.get("HORIZON_DB", "HORIZON") + ".TAGS.TAG_REGISTRY",
+        "POLICY_REGISTRY": PRISM_CFG.get("HORIZON_DB", "HORIZON") + ".POLICIES.POLICY_REGISTRY",
+        "MASKING_TEMPLATES": PRISM_CFG.get("HORIZON_DB", "HORIZON") + ".POLICIES.MASKING_POLICY_TEMPLATES",
+        "GOV_AUDIT_LOG": PRISM_CFG.get("HORIZON_DB", "HORIZON") + ".AUDIT.GOV_AUDIT_LOG",
+        "SP_CREATE_TAG": PRISM_CFG.get("HORIZON_DB", "HORIZON") + ".TAGS.SP_GOV_CREATE_TAG",
+        "SP_APPLY_TAG": PRISM_CFG.get("HORIZON_DB", "HORIZON") + ".TAGS.SP_GOV_APPLY_TAG",
+        "SP_CREATE_MASKING": PRISM_CFG.get("HORIZON_DB", "HORIZON") + ".POLICIES.SP_GOV_CREATE_MASKING_POLICY",
+        "SP_APPLY_MASKING": PRISM_CFG.get("HORIZON_DB", "HORIZON") + ".POLICIES.SP_GOV_APPLY_MASKING_POLICY"
     },
     "STORED_PROCEDURES": {
         "DATABASE_CONTROLLER": "SP_DATABASE_CONTROLLER",
         "MANAGE_FUNCTIONAL_TECHNICAL_ROLES": "SP_MANAGE_FUNCTIONAL_TECHNICAL_ROLES_CONTROLLER"
     }
 }
+}
 
-# Helper function to get fully qualified object names
+
 def get_fully_qualified_name(object_name, include_db=True, include_audit_db=False):
     """
     Generate fully qualified name for database objects.
