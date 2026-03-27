@@ -13,11 +13,11 @@ ABOUT = "About PRISM"
 def load_config_from_db():
     """Load CONFIG from PRISM_SETTINGS table. Falls back to defaults if not available."""
     defaults = {
-        "SECURITY_DB": "SECURITY_UNDER_DEVELOPMENT",
+        "SECURITY_DB": "PRISM_SECURITY",
         "SECURITY_SCHEMA": "ACCESS_CONTROL",
-        "OPERATIONS_DB": "OPERATIONS_UNDER_DEVELOPMENT",
+        "OPERATIONS_DB": "PRISM_OPERATIONS",
         "OPERATIONS_SCHEMA": "LOGS",
-        "HORIZON_DB": "HORIZON",
+        "HORIZON_DB": "PRISM_HORIZON",
         "WAREHOUSE": "COMPUTE_WH",
         "APP_ROLE": "PRISM_APP_ROLE",
         "GOV_ROLE": "PRISM_GOV_ROLE",
@@ -39,11 +39,11 @@ CONFIG = {
         "LOGO_URL": "NTT-Data-Logo.png"
     },
     "DATABASE": {
-        "NAME": PRISM_CFG.get("SECURITY_DB", "SECURITY_UNDER_DEVELOPMENT"),
+        "NAME": PRISM_CFG.get("SECURITY_DB", "PRISM_SECURITY"),
         "SCHEMA": PRISM_CFG.get("SECURITY_SCHEMA", "ACCESS_CONTROL")
     },
     "AUDIT_DATABASE": {
-        "NAME": PRISM_CFG.get("OPERATIONS_DB", "OPERATIONS_UNDER_DEVELOPMENT"),
+        "NAME": PRISM_CFG.get("OPERATIONS_DB", "PRISM_OPERATIONS"),
         "SCHEMA": PRISM_CFG.get("OPERATIONS_SCHEMA", "LOGS")
     },
     "TABLES": {
@@ -60,24 +60,23 @@ CONFIG = {
         "ENVIRONMENT_ROLE_METADATA": "ENVIRONMENT_ROLE_METADATA"
     },
     "HORIZON": {
-        "DATABASE": PRISM_CFG.get("HORIZON_DB", "HORIZON"),
+        "DATABASE": PRISM_CFG.get("HORIZON_DB", "PRISM_HORIZON"),
         "TAGS_SCHEMA": "TAGS",
         "POLICIES_SCHEMA": "POLICIES",
         "AUDIT_SCHEMA": "AUDIT",
-        "TAG_REGISTRY": PRISM_CFG.get("HORIZON_DB", "HORIZON") + ".TAGS.TAG_REGISTRY",
-        "POLICY_REGISTRY": PRISM_CFG.get("HORIZON_DB", "HORIZON") + ".POLICIES.POLICY_REGISTRY",
-        "MASKING_TEMPLATES": PRISM_CFG.get("HORIZON_DB", "HORIZON") + ".POLICIES.MASKING_POLICY_TEMPLATES",
-        "GOV_AUDIT_LOG": PRISM_CFG.get("HORIZON_DB", "HORIZON") + ".AUDIT.GOV_AUDIT_LOG",
-        "SP_CREATE_TAG": PRISM_CFG.get("HORIZON_DB", "HORIZON") + ".TAGS.SP_GOV_CREATE_TAG",
-        "SP_APPLY_TAG": PRISM_CFG.get("HORIZON_DB", "HORIZON") + ".TAGS.SP_GOV_APPLY_TAG",
-        "SP_CREATE_MASKING": PRISM_CFG.get("HORIZON_DB", "HORIZON") + ".POLICIES.SP_GOV_CREATE_MASKING_POLICY",
-        "SP_APPLY_MASKING": PRISM_CFG.get("HORIZON_DB", "HORIZON") + ".POLICIES.SP_GOV_APPLY_MASKING_POLICY"
+        "TAG_REGISTRY": PRISM_CFG.get("HORIZON_DB", "PRISM_HORIZON") + ".TAGS.TAG_REGISTRY",
+        "POLICY_REGISTRY": PRISM_CFG.get("HORIZON_DB", "PRISM_HORIZON") + ".POLICIES.POLICY_REGISTRY",
+        "MASKING_TEMPLATES": PRISM_CFG.get("HORIZON_DB", "PRISM_HORIZON") + ".POLICIES.MASKING_POLICY_TEMPLATES",
+        "GOV_AUDIT_LOG": PRISM_CFG.get("HORIZON_DB", "PRISM_HORIZON") + ".AUDIT.GOV_AUDIT_LOG",
+        "SP_CREATE_TAG": PRISM_CFG.get("HORIZON_DB", "PRISM_HORIZON") + ".TAGS.SP_GOV_CREATE_TAG",
+        "SP_APPLY_TAG": PRISM_CFG.get("HORIZON_DB", "PRISM_HORIZON") + ".TAGS.SP_GOV_APPLY_TAG",
+        "SP_CREATE_MASKING": PRISM_CFG.get("HORIZON_DB", "PRISM_HORIZON") + ".POLICIES.SP_GOV_CREATE_MASKING_POLICY",
+        "SP_APPLY_MASKING": PRISM_CFG.get("HORIZON_DB", "PRISM_HORIZON") + ".POLICIES.SP_GOV_APPLY_MASKING_POLICY"
     },
     "STORED_PROCEDURES": {
         "DATABASE_CONTROLLER": "SP_DATABASE_CONTROLLER",
         "MANAGE_FUNCTIONAL_TECHNICAL_ROLES": "SP_MANAGE_FUNCTIONAL_TECHNICAL_ROLES_CONTROLLER"
     }
-}
 }
 
 
@@ -95,7 +94,7 @@ def get_fully_qualified_name(object_name, include_db=True, include_audit_db=Fals
         return f"{CONFIG['DATABASE']['NAME']}.{CONFIG['DATABASE']['SCHEMA']}.{object_name}"
    
 #    if include_db:
-#        return f"{CONFIG['SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SP_APPLY_METADATA_PRIVILEGES_TO_ROLEDATABASE']['NAME']}.{CONFIG['DATABASE']['SCHEMA']}.{object_name}"
+#        return f"{CONFIG['PRISM_SECURITY.ACCESS_CONTROL.SP_APPLY_METADATA_PRIVILEGES_TO_ROLEDATABASE']['NAME']}.{CONFIG['DATABASE']['SCHEMA']}.{object_name}"
     if include_audit_db:
         return f"{CONFIG['AUDIT_DATABASE']['NAME']}.{CONFIG['AUDIT_DATABASE']['SCHEMA']}.{object_name}"        
     return f"{CONFIG['DATABASE']['SCHEMA']}.{object_name}"
@@ -184,6 +183,26 @@ def configure_chart(fig):
     )
     return fig
 
+def get_env_role_for_ownership(ownership_column: str) -> str:
+    """Get the role template from ENVIRONMENT_ROLE_METADATA that has the specified ownership flag set to TRUE."""
+    try:
+        query = f"""
+        SELECT ROLE_TEMPLATE
+        FROM {get_fully_qualified_name(CONFIG["TABLES"]["ENVIRONMENT_ROLE_METADATA"])}
+        WHERE {ownership_column} = TRUE AND IS_ACTIVE = TRUE
+        LIMIT 1
+        """
+        result = session.sql(query).collect()
+        if result:
+            return result[0][0]
+    except:
+        pass
+    if ownership_column == "OWNS_ACCOUNT_ROLES":
+        return "<ENV>_USERADMIN"
+    elif ownership_column == "OWNS_DATABASES":
+        return "<ENV>_SYSADMIN"
+    return "<ENV>_USERADMIN"
+
 def get_environments():
     """Fetches available environment names from the ENVIRONMENTS_TABLE."""
     try:
@@ -197,8 +216,17 @@ def get_environments():
 def get_function_names(role_type_filter: str):
     """Fetches function names based on role type from ROLE_METADATA_TABLE."""
     try:
-        role_df = session.table(ROLE_METADATA_TABLE).filter(f"ROLE_TYPE = '{role_type_filter}'").select("FUNCTION_NAME").distinct()
-        return sorted([row["FUNCTION_NAME"] for row in role_df.collect()])
+        query = f"""
+        SELECT DISTINCT
+            REGEXP_REPLACE(
+                REGEXP_REPLACE(ROLE_NAME_PATTERN, '^<ENV>_', ''),
+                '_(FR|TR)$', ''
+            ) AS FUNCTION_NAME
+        FROM {ROLE_METADATA_TABLE}
+        WHERE ROLE_TYPE = '{role_type_filter}'
+        ORDER BY FUNCTION_NAME
+        """
+        return [row["FUNCTION_NAME"] for row in session.sql(query).collect()]
     except Exception as e:
         st.error(f"Error fetching function names for type '{role_type_filter}' from '{ROLE_METADATA_TABLE}': {e}")
         return []
@@ -774,7 +802,8 @@ def ui_create_warehouse():
         match = filtered2[filtered2["WAREHOUSE_SIZE"] == wh_size]
         if not match.empty:
             config = match.iloc[0]
-            if config["IS_CUSTOM"]:
+            pattern = str(config.get("WAREHOUSE_NAME_PATTERN", ""))
+            if "<CUSTOM>" in pattern or "<TYPE>" in pattern:
                 custom_name = st.text_input("Custom Function Name", key="cw_custom").strip().upper()
 
     if config is not None:
@@ -848,8 +877,254 @@ def ui_create_warehouse():
                 st.error("Operation failed. Please check your inputs and permissions.")
                 log_audit_event("CREATE_WAREHOUSE", wh_name, "Error", "ERROR", str(e))
 def ui_create_role():
-    """UI for creating a new role, granting database access, and setting ownership."""
+    """UI for creating roles - single or bulk."""
     st.header("Create New Role")
+    tab_single, tab_bulk = st.tabs(["Single Role", "Bulk Create"])
+
+    with tab_single:
+        _ui_create_role_single()
+
+    with tab_bulk:
+        _ui_bulk_create_roles()
+
+
+def _generate_bulk_role_template():
+    """Generate a CSV template for bulk role creation."""
+    import io
+    environments = get_environments()
+    suffixes = get_access_role_suffixes()
+    env_str = " | ".join(environments) if environments else "DEV | SIT | UAT | PROD"
+    suffix_str = " | ".join(suffixes) if suffixes else "RO_AR | RW_AR | FULL_AR"
+
+    header = "ENVIRONMENT,ROLE_TYPE,FUNCTION_NAME,PREFIX,ACCESS_TYPE,TARGET_DATABASE,ACCESS_LEVEL"
+    examples = [
+        f"{environments[0] if environments else 'DEV'},Functional,DATA_SCIENTIST,,Database Level,{environments[0] if environments else 'DEV'}_SALES,{suffixes[0] if suffixes else 'RO_AR'}",
+        f"{environments[0] if environments else 'DEV'},Functional,BUSINESS_ANALYST,,Database Level,{environments[0] if environments else 'DEV'}_SALES,{suffixes[0] if suffixes else 'RO_AR'}",
+        f"{environments[0] if environments else 'DEV'},Technical,ETL,,Database Level,{environments[0] if environments else 'DEV'}_SALES,{suffixes[1] if len(suffixes) > 1 else 'RW_AR'}",
+        f"{environments[0] if environments else 'DEV'},Functional,MARKETING,CAMPAIGNS,No Access,,",
+        f"{environments[0] if environments else 'DEV'},Functional,FINANCE,,Grant to Existing Role,,",
+    ]
+    content = header + "\n" + "\n".join(examples) + "\n"
+    instructions = f"""#
+# PRISM Bulk Role Creation Template
+# -----------------------------------
+# Columns:
+#   ENVIRONMENT      - Required. One of: {env_str}
+#   ROLE_TYPE        - Required. 'Functional' or 'Technical'
+#   FUNCTION_NAME    - Required. Base function name (e.g., DATA_SCIENTIST, ETL, ANALYTICS)
+#   PREFIX           - Optional. Custom prefix (e.g., MARKETING, FINANCE). Leave empty if not needed.
+#   ACCESS_TYPE      - Required. One of: 'Database Level' | 'No Access' | 'Grant to Existing Role'
+#   TARGET_DATABASE  - Required for 'Database Level'. Full database name (e.g., DEV_SALES).
+#   ACCESS_LEVEL     - Required for 'Database Level'. One of: {suffix_str}
+#
+# Generated role name format: <ENV>_[PREFIX_]<FUNCTION_NAME>_<FR|TR>
+# Lines starting with # are ignored.
+#
+"""
+    return instructions + content
+
+
+def _ui_bulk_create_roles():
+    """Bulk role creation via CSV template."""
+    st.subheader("Bulk Create Roles from Template")
+
+    st.markdown("""
+    **How it works:**
+    1. Download the CSV template below
+    2. Fill in your role definitions (one per row)
+    3. Upload the completed file
+    4. Review the preview and confirm
+    """)
+
+    template_csv = _generate_bulk_role_template()
+    st.download_button(
+        label="Download CSV Template",
+        data=template_csv,
+        file_name="prism_bulk_roles_template.csv",
+        mime="text/csv",
+        key="bulk_download_template"
+    )
+
+    st.markdown("---")
+    uploaded_file = st.file_uploader("Upload completed CSV", type=["csv"], key="bulk_role_upload")
+
+    if uploaded_file is not None:
+        import io
+        content = uploaded_file.getvalue().decode("utf-8")
+        lines = [l.strip() for l in content.split("\n") if l.strip() and not l.strip().startswith("#")]
+
+        if not lines:
+            st.error("No data rows found in the uploaded file.")
+            return
+
+        header = lines[0].split(",")
+        expected = ["ENVIRONMENT", "ROLE_TYPE", "FUNCTION_NAME", "PREFIX", "ACCESS_TYPE", "TARGET_DATABASE", "ACCESS_LEVEL"]
+        if [h.strip().upper() for h in header] != expected:
+            st.error(f"Invalid header. Expected: {','.join(expected)}")
+            return
+
+        rows = []
+        for i, line in enumerate(lines[1:], start=2):
+            parts = line.split(",")
+            if len(parts) < 7:
+                parts += [""] * (7 - len(parts))
+            row = {expected[j]: parts[j].strip() for j in range(7)}
+            row["_ROW"] = i
+            rows.append(row)
+
+        if not rows:
+            st.warning("No data rows found after the header.")
+            return
+
+        environments = get_environments()
+        access_role_suffixes = get_access_role_suffixes()
+        role_type_suffixes = get_role_type_suffixes()
+
+        preview_data = []
+        errors = []
+        for row in rows:
+            env = row["ENVIRONMENT"].upper()
+            role_type = row["ROLE_TYPE"]
+            func_name = row["FUNCTION_NAME"].upper()
+            prefix = row["PREFIX"].upper()
+            access_type = row["ACCESS_TYPE"]
+            target_db = row["TARGET_DATABASE"].upper()
+            access_level = row["ACCESS_LEVEL"].upper()
+
+            if env not in environments:
+                errors.append(f"Row {row['_ROW']}: Invalid environment '{env}'. Must be one of: {', '.join(environments)}")
+            if role_type not in ["Functional", "Technical"]:
+                errors.append(f"Row {row['_ROW']}: ROLE_TYPE must be 'Functional' or 'Technical', got '{role_type}'")
+            if not func_name:
+                errors.append(f"Row {row['_ROW']}: FUNCTION_NAME is required")
+            if access_type not in ["Database Level", "No Access", "Grant to Existing Role"]:
+                errors.append(f"Row {row['_ROW']}: ACCESS_TYPE must be 'Database Level', 'No Access', or 'Grant to Existing Role', got '{access_type}'")
+            if access_type == "Database Level":
+                if not target_db:
+                    errors.append(f"Row {row['_ROW']}: TARGET_DATABASE is required for 'Database Level' access")
+                if access_level and access_level not in access_role_suffixes:
+                    errors.append(f"Row {row['_ROW']}: ACCESS_LEVEL '{access_level}' not in profiles: {', '.join(access_role_suffixes)}")
+
+            suffix = "_FR" if role_type == "Functional" else "_TR"
+            for s in role_type_suffixes:
+                if role_type == "Functional" and "FR" in s:
+                    suffix = s
+                elif role_type == "Technical" and "TR" in s:
+                    suffix = s
+
+            display_func = f"{prefix}_{func_name}" if prefix else func_name
+            generated_name = f"{env}_{display_func}{suffix}".upper()
+
+            db_name_no_prefix = ""
+            if target_db and env:
+                parts = target_db.split("_", 1)
+                db_name_no_prefix = parts[1] if len(parts) > 1 and parts[0].upper() == env else target_db
+
+            preview_data.append({
+                "Row": row["_ROW"],
+                "Generated Role": generated_name,
+                "Environment": env,
+                "Role Type": role_type,
+                "Function": display_func,
+                "Access Type": access_type,
+                "Target DB": target_db,
+                "Access Level": access_level,
+                "_func_name": func_name,
+                "_prefix": prefix,
+                "_db_no_prefix": db_name_no_prefix,
+                "_suffix_type": suffix,
+                "_access_suffix": access_level
+            })
+
+        if errors:
+            st.error(f"Found {len(errors)} validation error(s):")
+            for e in errors:
+                st.warning(e)
+            return
+
+        preview_df = pd.DataFrame(preview_data)
+        display_cols = ["Row", "Generated Role", "Environment", "Role Type", "Function", "Access Type", "Target DB", "Access Level"]
+        st.subheader(f"Preview: {len(preview_data)} role(s) to create")
+        st.dataframe(preview_df[display_cols], use_container_width=True, hide_index=True)
+
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            st.metric("Total Roles", len(preview_data))
+        with col2:
+            db_count = len([r for r in preview_data if r["Access Type"] == "Database Level"])
+            no_access = len([r for r in preview_data if r["Access Type"] == "No Access"])
+            grant_existing = len([r for r in preview_data if r["Access Type"] == "Grant to Existing Role"])
+            st.caption(f"Database Level: {db_count} | No Access: {no_access} | Grant to Existing: {grant_existing}")
+
+        confirm = st.checkbox("I confirm I want to create all the roles listed above", key="bulk_confirm")
+
+        if st.button("Create All Roles", type="primary", disabled=not confirm, key="bulk_execute"):
+            progress = st.progress(0)
+            status_container = st.container()
+            success_count = 0
+            error_count = 0
+            results_log = []
+
+            for idx, role_def in enumerate(preview_data):
+                progress.progress((idx + 1) / len(preview_data))
+                env = role_def["Environment"]
+                role_name = role_def["Generated Role"]
+                access_type = role_def["Access Type"]
+                func_name = role_def["_func_name"]
+                prefix = role_def["_prefix"]
+                target_db = role_def["Target DB"]
+                db_no_prefix = role_def["_db_no_prefix"]
+                access_suffix = role_def["_access_suffix"]
+                role_type = role_def["Role Type"]
+
+                try:
+                    if access_type == "Database Level" and target_db and access_suffix:
+                        sp_name = get_fully_qualified_name(CONFIG["STORED_PROCEDURES"]["MANAGE_FUNCTIONAL_TECHNICAL_ROLES"])
+                        sql_cmd = f"CALL {sp_name}('{env}', '{func_name}', '{role_type}', '{db_no_prefix}', '{access_suffix}', '{prefix}')"
+                        session.sql(sql_cmd).collect()
+                        account_role_owner = get_env_role_for_ownership('OWNS_ACCOUNT_ROLES').replace('<ENV>', env)
+                        try:
+                            session.sql(f"GRANT ROLE {role_name} TO ROLE {account_role_owner}").collect()
+                        except: pass
+
+                    elif access_type == "No Access":
+                        session.sql(f"CREATE ROLE IF NOT EXISTS {role_name}").collect()
+                        account_role_owner = get_env_role_for_ownership('OWNS_ACCOUNT_ROLES').replace('<ENV>', env)
+                        try:
+                            session.sql(f"GRANT ROLE {role_name} TO ROLE {account_role_owner}").collect()
+                        except: pass
+
+                    elif access_type == "Grant to Existing Role":
+                        session.sql(f"CREATE ROLE IF NOT EXISTS {role_name}").collect()
+                        account_role_owner = get_env_role_for_ownership('OWNS_ACCOUNT_ROLES').replace('<ENV>', env)
+                        try:
+                            session.sql(f"GRANT ROLE {role_name} TO ROLE {account_role_owner}").collect()
+                        except: pass
+
+                    success_count += 1
+                    results_log.append({"Role": role_name, "Status": "SUCCESS", "Detail": access_type})
+                    log_audit_event("BULK_CREATE_ROLE", role_name, f"Bulk create: {access_type}", "SUCCESS", f"DB: {target_db}, Level: {access_suffix}")
+
+                except Exception as e:
+                    error_count += 1
+                    results_log.append({"Role": role_name, "Status": "ERROR", "Detail": str(e)[:200]})
+                    log_audit_event("BULK_CREATE_ROLE", role_name, f"Bulk create: {access_type}", "ERROR", str(e)[:200])
+
+            progress.progress(1.0)
+
+            with status_container:
+                if error_count == 0:
+                    st.success(f"All {success_count} role(s) created successfully!")
+                else:
+                    st.warning(f"Completed: {success_count} succeeded, {error_count} failed.")
+
+                results_df = pd.DataFrame(results_log)
+                st.dataframe(results_df, use_container_width=True, hide_index=True)
+            st.cache_data.clear()
+
+
+def _ui_create_role_single():
+    """UI for creating a single new role, granting database access, and setting ownership."""
     environments = get_environments()
     all_databases = get_databases()
     
@@ -1294,8 +1569,7 @@ def ui_create_role():
             )
 
 # --- Role Hierarchy Visualization Functions ---
-@st.cache_data(ttl=900) # Cache for 15 mins due to potential latency of ACCOUNT_USAGE
-@st.cache_data(ttl=900) # Cache for 15 mins due to potential latency of ACCOUNT_USAGE
+@st.cache_data(ttl=900)
 def get_all_role_grants_df():
     """
     Fetches all active role-to-role grants from SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES.
@@ -1558,15 +1832,192 @@ def ui_show_role_hierarchy():
 
 
 def ui_display_rbac_architecture():
-    """UI for displaying RBAC architecture diagram."""
+    """UI for displaying RBAC architecture — metadata-driven."""
     st.header("RBAC Architecture")
-    st.image("TMHCC RBAC Design.png", use_container_width=True)
-    st.download_button(
-        label="Download RBAC Architecture Diagram",
-        data=open("TMHCC RBAC Design.png", "rb").read(),
-        file_name="TMHCC RBAC Design.png",
-        mime="image/png"
-    )
+    st.caption("Metadata-driven view of how PRISM provisions roles, ownership, and privileges when you create a database and schemas.")
+
+    environments = get_environments()
+    env = st.selectbox("Select Environment to Visualize", environments, key="rbac_env") if environments else "DEV"
+
+    profiles_df = session.sql(f"SELECT ACCESS_CODE, ROLE_SUFFIX, DESCRIPTION, HIERARCHY_PARENT, HIERARCHY_ORDER, IS_SYSTEM_ONLY FROM {get_fully_qualified_name(CONFIG['TABLES']['ACCESS_PROFILES'])} WHERE IS_ACTIVE = TRUE ORDER BY HIERARCHY_ORDER").to_pandas()
+    env_roles_df = session.sql(f"SELECT ROLE_TEMPLATE, PARENT_SYSTEM_ROLE, OWNS_DATABASES, OWNS_SCHEMAS, OWNS_DB_ROLES FROM {get_fully_qualified_name(CONFIG['TABLES']['ENVIRONMENT_ROLE_METADATA'])} WHERE IS_ACTIVE = TRUE ORDER BY HIERARCHY_ORDER").to_pandas()
+
+    tab1, tab2, tab3 = st.tabs(["Full Architecture", "Example: Database + Schemas", "Legend & Details"])
+
+    with tab1:
+        dot = graphviz.Digraph(comment="PRISM RBAC", graph_attr={"rankdir": "TB", "bgcolor": "transparent", "fontname": "Helvetica", "pad": "0.5", "nodesep": "0.6", "ranksep": "0.8"})
+        dot.attr("node", fontname="Helvetica", fontsize="10", style="filled,rounded", shape="box")
+        dot.attr("edge", fontname="Helvetica", fontsize="8", color="#888888")
+
+        with dot.subgraph(name="cluster_system") as s:
+            s.attr(label="System Roles", style="dashed", color="#aaaaaa", fontcolor="#666666")
+            s.node("ACCOUNTADMIN", fillcolor="#ffcdd2", fontcolor="#b71c1c")
+            s.node("SYSADMIN", fillcolor="#ffe0b2", fontcolor="#e65100")
+            s.node("USERADMIN", fillcolor="#fff9c4", fontcolor="#f57f17")
+
+        with dot.subgraph(name="cluster_env") as s:
+            s.attr(label=f"Environment Roles ({env})", style="dashed", color="#90caf9", fontcolor="#1565c0")
+            for _, er in env_roles_df.iterrows():
+                rn = er["ROLE_TEMPLATE"].replace("<ENV>", env)
+                owns = []
+                if er["OWNS_DATABASES"]: owns.append("DBs")
+                if er["OWNS_SCHEMAS"]: owns.append("Schemas")
+                if er["OWNS_DB_ROLES"]: owns.append("DB Roles")
+                own_label = f"\nOwns: {', '.join(owns)}" if owns else ""
+                s.node(rn, label=f"{rn}{own_label}", fillcolor="#bbdefb", fontcolor="#0d47a1")
+
+        for _, er in env_roles_df.iterrows():
+            rn = er["ROLE_TEMPLATE"].replace("<ENV>", env)
+            parent = er["PARENT_SYSTEM_ROLE"].replace("<ENV>", env)
+            dot.edge(rn, parent, label="granted to", fontcolor="#999999")
+
+        dot.edge("ACCOUNTADMIN", "ACCOUNTADMIN", style="invis")
+
+        example_db = f"{env}_EXAMPLE_DB"
+        with dot.subgraph(name="cluster_db") as s:
+            s.attr(label=f"Database Roles ({example_db})", style="dashed", color="#a5d6a7", fontcolor="#2e7d32")
+            for _, p in profiles_df.iterrows():
+                suffix = p["ROLE_SUFFIX"]
+                code = p["ACCESS_CODE"]
+                is_sys = p["IS_SYSTEM_ONLY"]
+                color = "#c8e6c9" if not is_sys else "#fff9c4"
+                fc = "#1b5e20" if not is_sys else "#f57f17"
+                s.node(f"db_{code}", label=f"{example_db}.{suffix}\n[{code}]", fillcolor=color, fontcolor=fc)
+
+        for _, p in profiles_df.iterrows():
+            if pd.notna(p["HIERARCHY_PARENT"]):
+                dot.edge(f"db_{p['HIERARCHY_PARENT']}", f"db_{p['ACCESS_CODE']}", label="inherits", style="dashed", fontcolor="#999999")
+
+        for _, er in env_roles_df.iterrows():
+            rn = er["ROLE_TEMPLATE"].replace("<ENV>", env)
+            if er["OWNS_DB_ROLES"]:
+                dot.edge(rn, f"db_OWN", label="owns all\nDB roles", style="bold", color="#ff9800", fontcolor="#e65100")
+            if er["OWNS_DATABASES"]:
+                dot.edge(rn, example_db + "_node", label="owns DB", style="bold", color="#4caf50", fontcolor="#2e7d32")
+
+        dot.node(example_db + "_node", label=example_db, shape="cylinder", fillcolor="#e8f5e9", fontcolor="#2e7d32")
+
+        st.graphviz_chart(dot, use_container_width=True)
+
+    with tab2:
+        st.subheader(f"Example: {env}_SALES with schemas RAW, CURATED, ANALYTICS")
+        st.markdown("This shows exactly what PRISM creates when you run **Create Database** with schemas.")
+
+        db_name = f"{env}_SALES"
+        schema_names = ["RAW", "CURATED", "ANALYTICS"]
+
+        dot2 = graphviz.Digraph(comment="DB Example", graph_attr={"rankdir": "TB", "bgcolor": "transparent", "fontname": "Helvetica", "pad": "0.5", "nodesep": "0.5", "ranksep": "0.7"})
+        dot2.attr("node", fontname="Helvetica", fontsize="9", style="filled,rounded", shape="box")
+        dot2.attr("edge", fontname="Helvetica", fontsize="7", color="#888888")
+
+        sysadmin = f"{env}_SYSADMIN"
+        useradmin = f"{env}_USERADMIN"
+        dot2.node(sysadmin, fillcolor="#bbdefb", fontcolor="#0d47a1")
+        dot2.node(useradmin, fillcolor="#bbdefb", fontcolor="#0d47a1")
+
+        dot2.node(db_name, label=db_name, shape="cylinder", fillcolor="#e8f5e9", fontcolor="#2e7d32", width="2")
+        dot2.edge(sysadmin, db_name, label="OWNERSHIP", color="#4caf50", fontcolor="#2e7d32")
+
+        with dot2.subgraph(name="cluster_db_roles") as s:
+            s.attr(label=f"Database-Level Roles ({db_name}.*)", style="dashed", color="#a5d6a7", fontcolor="#2e7d32")
+            for _, p in profiles_df.iterrows():
+                suffix = p["ROLE_SUFFIX"]
+                code = p["ACCESS_CODE"]
+                is_sys = p["IS_SYSTEM_ONLY"]
+                color = "#c8e6c9" if not is_sys else "#fff9c4"
+                fc = "#1b5e20" if not is_sys else "#f57f17"
+                s.node(f"dbr_{code}", label=f"{db_name}.{suffix}", fillcolor=color, fontcolor=fc)
+
+        for _, p in profiles_df.iterrows():
+            if pd.notna(p["HIERARCHY_PARENT"]):
+                dot2.edge(f"dbr_{p['HIERARCHY_PARENT']}", f"dbr_{p['ACCESS_CODE']}", style="dashed", color="#66bb6a")
+
+        dot2.edge(useradmin, "dbr_OWN", label="OWNERSHIP\nof all DB roles", color="#ff9800", fontcolor="#e65100")
+
+        for schema_name in schema_names:
+            fq_schema = f"{db_name}.{schema_name}"
+            dot2.node(fq_schema, label=schema_name, shape="folder", fillcolor="#e3f2fd", fontcolor="#1565c0", width="1.5")
+            dot2.edge(db_name, fq_schema, style="bold", color="#42a5f5")
+            dot2.edge(sysadmin, fq_schema, label="OWNERSHIP", color="#4caf50", fontcolor="#2e7d32", style="dotted")
+
+            with dot2.subgraph(name=f"cluster_schema_{schema_name}") as ss:
+                ss.attr(label=f"Schema Roles ({schema_name})", style="dashed", color="#90caf9", fontcolor="#1976d2")
+                for _, p in profiles_df.iterrows():
+                    if p["IS_SYSTEM_ONLY"]:
+                        continue
+                    suffix = p["ROLE_SUFFIX"]
+                    code = p["ACCESS_CODE"]
+                    sr_name = f"{schema_name}_{suffix}"
+                    ss.node(f"sr_{schema_name}_{code}", label=f"{db_name}.{sr_name}", fillcolor="#e1f5fe", fontcolor="#01579b", fontsize="8")
+                    dot2.edge(f"sr_{schema_name}_{code}", f"dbr_{code}", label="granted to", style="dotted", color="#4fc3f7", fontcolor="#999999")
+
+        func_roles = [f"{env}_DATA_SCIENTIST_FR", f"{env}_DEVELOPER_FR", f"{env}_ETL_TR"]
+        with dot2.subgraph(name="cluster_func") as s:
+            s.attr(label="Functional / Technical Roles", style="dashed", color="#ce93d8", fontcolor="#6a1b9a")
+            for fr in func_roles:
+                s.node(fr, fillcolor="#f3e5f5", fontcolor="#4a148c")
+
+        dot2.edge(f"{env}_DATA_SCIENTIST_FR", "dbr_RO", label="granted\nRO_AR", color="#ab47bc", fontcolor="#6a1b9a")
+        dot2.edge(f"{env}_DEVELOPER_FR", "dbr_RW", label="granted\nRW_AR", color="#ab47bc", fontcolor="#6a1b9a")
+        dot2.edge(f"{env}_ETL_TR", "dbr_RW", label="granted\nRW_AR", color="#ab47bc", fontcolor="#6a1b9a")
+
+        dot2.edge(useradmin, func_roles[0], label="OWNERSHIP", color="#ff9800", fontcolor="#e65100", style="dotted")
+
+        st.graphviz_chart(dot2, use_container_width=True)
+
+        st.markdown("---")
+        st.subheader("What PRISM Creates (Step by Step)")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(f"""
+            **1. Environment Roles** (one-time per env)
+            | Role | Parent | Purpose |
+            |------|--------|---------|
+            | `{env}_SYSADMIN` | `SYSADMIN` | Owns DBs & schemas |
+            | `{env}_USERADMIN` | `USERADMIN` | Owns DB roles & account roles |
+            | `{env}_ADMIN` | `{env}_SYSADMIN` | Day-to-day admin |
+
+            **2. Database** `{db_name}`
+            - Ownership → `{env}_SYSADMIN`
+
+            **3. Database Roles** (one per access profile)
+            """)
+            for _, p in profiles_df.iterrows():
+                st.markdown(f"            - `{db_name}.{p['ROLE_SUFFIX']}` — {p['DESCRIPTION'][:60]}")
+
+        with col2:
+            st.markdown(f"""
+            **4. Schema Roles** (per schema, per non-system profile)
+            """)
+            for sn in schema_names:
+                roles_list = ", ".join([f"`{sn}_{p['ROLE_SUFFIX']}`" for _, p in profiles_df.iterrows() if not p["IS_SYSTEM_ONLY"]])
+                st.markdown(f"            - **{sn}**: {roles_list}")
+            st.markdown(f"""
+            **5. Privilege Assignment**
+            - Each DB role gets privileges per `ACCESS_PROFILE_PRIVILEGES`
+            - Each schema role gets schema-scoped privileges
+            - Schema roles are granted to their corresponding DB roles
+
+            **6. Functional/Technical Roles**
+            - Created per function (e.g., `{env}_DATA_SCIENTIST_FR`)
+            - Granted the appropriate DB role (e.g., `RO_AR`)
+            - Owned by `{env}_USERADMIN`
+            """)
+
+    with tab3:
+        st.subheader("Legend")
+        legend_data = {
+            "Color": ["Red", "Orange", "Yellow", "Blue", "Green", "Light Green", "Light Blue", "Purple"],
+            "Meaning": ["ACCOUNTADMIN (top-level)", "SYSADMIN (system)", "USERADMIN / System-only roles", "Environment roles", "Database (object)", "Database roles", "Schema roles", "Functional/Technical roles"],
+            "Example": ["ACCOUNTADMIN", "SYSADMIN", f"{env}_USERADMIN, OWN_AR", f"{env}_SYSADMIN", f"{env}_SALES", f"{env}_SALES.RW_AR", f"{env}_SALES.RAW_RO_AR", f"{env}_DATA_SCIENTIST_FR"]
+        }
+        st.dataframe(pd.DataFrame(legend_data), use_container_width=True, hide_index=True)
+
+        st.subheader("Access Profiles")
+        st.dataframe(profiles_df, use_container_width=True, hide_index=True)
+
+        st.subheader("Environment Role Metadata")
+        st.dataframe(env_roles_df, use_container_width=True, hide_index=True)
 
 def ui_manage_metadata():
     """UI for managing metadata tables with inline editing and composite key handling."""
@@ -1574,7 +2025,7 @@ def ui_manage_metadata():
    
     metadata_tables_query = """
     SELECT table_name
-    FROM SECURITY_UNDER_DEVELOPMENT.information_schema.tables
+    FROM PRISM_SECURITY.information_schema.tables
     WHERE table_schema = 'ACCESS_CONTROL'
     AND table_name LIKE '%METADATA'
     """
@@ -1585,7 +2036,7 @@ def ui_manage_metadata():
    
     if selected_table:
         # Fetch current data
-        table_data = session.table(f"SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.{selected_table}").collect()
+        table_data = session.table(f"PRISM_SECURITY.ACCESS_CONTROL.{selected_table}").collect()
         df = pd.DataFrame(table_data)
         
         if df.empty:
@@ -2354,7 +2805,6 @@ def get_database_role_hierarchy(selected_db):
     """
     return session.sql(query).to_pandas()
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
 def ui_assign_database_roles():
     """UI for assigning database roles to functional/technical roles."""
     st.header("Assign Database Roles")
@@ -2623,8 +3073,7 @@ def ui_assign_database_roles():
                 )
 
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
-@st.cache_data(ttl=300)  # Cache for 5 minutes
+@st.cache_data(ttl=300)
 def get_database_role_grants(selected_db):
     """Fetch direct grants on the database level."""
     try:
@@ -3524,9 +3973,9 @@ def ui_about():
 
         st.subheader("Stored Procedures")
         try:
-            sp_count = session.sql("SELECT COUNT(*) FROM SECURITY_UNDER_DEVELOPMENT.INFORMATION_SCHEMA.PROCEDURES WHERE PROCEDURE_SCHEMA = 'ACCESS_CONTROL' AND PROCEDURE_NAME LIKE 'SP_%'").collect()[0][0]
-            tbl_count = session.sql("SELECT COUNT(*) FROM SECURITY_UNDER_DEVELOPMENT.INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'ACCESS_CONTROL' AND TABLE_TYPE = 'BASE TABLE'").collect()[0][0]
-            view_count = session.sql("SELECT COUNT(*) FROM SECURITY_UNDER_DEVELOPMENT.INFORMATION_SCHEMA.VIEWS WHERE TABLE_SCHEMA = 'ACCESS_CONTROL'").collect()[0][0]
+            sp_count = session.sql("SELECT COUNT(*) FROM PRISM_SECURITY.INFORMATION_SCHEMA.PROCEDURES WHERE PROCEDURE_SCHEMA = 'ACCESS_CONTROL' AND PROCEDURE_NAME LIKE 'SP_%'").collect()[0][0]
+            tbl_count = session.sql("SELECT COUNT(*) FROM PRISM_SECURITY.INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'ACCESS_CONTROL' AND TABLE_TYPE = 'BASE TABLE'").collect()[0][0]
+            view_count = session.sql("SELECT COUNT(*) FROM PRISM_SECURITY.INFORMATION_SCHEMA.VIEWS WHERE TABLE_SCHEMA = 'ACCESS_CONTROL'").collect()[0][0]
             priv_count = session.sql("SELECT COUNT(*) FROM " + get_fully_qualified_name(CONFIG["TABLES"]["SNOWFLAKE_PRIVILEGE_CATALOG"], include_db=True)).collect()[0][0]
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("Stored Procedures", sp_count)
@@ -3551,12 +4000,17 @@ def get_access_role_suffixes():
         st.error(f"Error fetching access role suffixes: {e}")
         return []
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
+@st.cache_data(ttl=300)
 def get_role_type_suffixes():
     """Fetch distinct role type suffixes from FUNCTIONAL_TECHNICAL_ROLE_METADATA."""
     try:
         query = f"""
-        SELECT DISTINCT SUFFIX
+        SELECT DISTINCT
+            CASE
+                WHEN ROLE_NAME_PATTERN LIKE '%\_FR' THEN '_FR'
+                WHEN ROLE_NAME_PATTERN LIKE '%\_TR' THEN '_TR'
+                ELSE SUBSTR(ROLE_NAME_PATTERN, REGEXP_INSTR(ROLE_NAME_PATTERN, '_[^_]+$'))
+            END AS SUFFIX
         FROM {get_fully_qualified_name(CONFIG["TABLES"]["ROLE_METADATA"])}
         ORDER BY SUFFIX
         """
@@ -3781,7 +4235,7 @@ def is_governance_user():
         if has_direct:
             st.session_state["_gov_checked"] = True
             return True
-        result2 = session.call("SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SP_CHECK_GOV_ACCESS", user)
+        result2 = session.call("PRISM_SECURITY.ACCESS_CONTROL.SP_CHECK_GOV_ACCESS", user)
         val = bool(result2)
         st.session_state["_gov_checked"] = val
         return val
@@ -3799,21 +4253,21 @@ def ui_gov_policy_audit():
             st.metric("Total Masking Policies", len(df))
             st.dataframe(df, use_container_width=True, hide_index=True)
         except Exception as e:
-            st.error("An error occurred. Please contact your administrator if this persists.")
+            st.error(f"Error loading masking policies: {e}")
     with tab2:
         try:
             df = session.sql("SELECT POLICY_NAME, POLICY_CATALOG AS DATABASE_NAME, POLICY_SCHEMA AS SCHEMA_NAME, POLICY_OWNER, CREATED, LAST_ALTERED FROM SNOWFLAKE.ACCOUNT_USAGE.ROW_ACCESS_POLICIES WHERE DELETED IS NULL ORDER BY POLICY_NAME").to_pandas()
             st.metric("Total Row Access Policies", len(df))
             st.dataframe(df, use_container_width=True, hide_index=True)
         except Exception as e:
-            st.error("An error occurred. Please contact your administrator if this persists.")
+            st.error(f"Error loading row access policies: {e}")
     with tab3:
         try:
             df = session.sql("SELECT TAG_NAME, TAG_DATABASE, TAG_SCHEMA, OBJECT_DATABASE, OBJECT_SCHEMA, OBJECT_NAME, COLUMN_NAME, TAG_VALUE, DOMAIN FROM SNOWFLAKE.ACCOUNT_USAGE.TAG_REFERENCES ORDER BY TAG_NAME LIMIT 500").to_pandas()
             st.metric("Tag Assignments", len(df))
             st.dataframe(df, use_container_width=True, hide_index=True)
         except Exception as e:
-            st.error("An error occurred. Please contact your administrator if this persists.")
+            st.error(f"Error loading tag references: {e}")
 
 def ui_gov_tag_manager():
     """Create and apply tags."""
@@ -3824,7 +4278,7 @@ def ui_gov_tag_manager():
         tag_comment = st.text_input("Comment", key="gt_comment")
         if st.button("Create Tag", key="gt_create") and tag_name:
             try:
-                result = session.call("HORIZON.TAGS.SP_GOV_CREATE_TAG", tag_name, tag_comment, [])
+                result = session.call("PRISM_HORIZON.TAGS.SP_GOV_CREATE_TAG", tag_name, tag_comment, [])
                 import json
                 r = json.loads(result) if isinstance(result, str) else result
                 if r.get("status") == "SUCCESS":
@@ -3850,7 +4304,7 @@ def ui_gov_tag_manager():
                 cols = session.sql(f"SELECT COLUMN_NAME FROM {target_db}.INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{target_schema}' AND TABLE_NAME = '{target_table}' ORDER BY 1").to_pandas()["COLUMN_NAME"].tolist()
                 target_column = st.selectbox("Column (optional)", [""] + cols, key="gt_col")
             except: pass
-        tag_registry = session.sql("SELECT TAG_NAME FROM HORIZON.TAGS.TAG_REGISTRY WHERE IS_ACTIVE = TRUE ORDER BY 1").to_pandas()["TAG_NAME"].tolist()
+        tag_registry = session.sql("SELECT TAG_NAME FROM PRISM_HORIZON.TAGS.TAG_REGISTRY ORDER BY 1").to_pandas()["TAG_NAME"].tolist()
         selected_tag = st.selectbox("Tag", tag_registry if tag_registry else [], key="gt_tag")
         tag_val = st.text_input("Tag Value", key="gt_val")
         if st.button("Apply Tag", key="gt_apply") and selected_tag:
@@ -3861,7 +4315,7 @@ def ui_gov_tag_manager():
             else:
                 fqn = target_db + "." + target_schema + "." + target_table
             try:
-                result = session.call("HORIZON.TAGS.SP_GOV_APPLY_TAG", target_type, fqn, selected_tag, tag_val, target_column if target_column else "")
+                result = session.call("PRISM_HORIZON.TAGS.SP_GOV_APPLY_TAG", target_type, fqn, selected_tag, tag_val, target_column if target_column else "")
                 import json
                 r = json.loads(result) if isinstance(result, str) else result
                 if r.get("status") == "SUCCESS":
@@ -3876,7 +4330,7 @@ def ui_gov_masking_policies():
     st.header("Masking Policies")
     tab1, tab2, tab3 = st.tabs(["Create from Template", "Apply to Column", "Registry"])
     with tab1:
-        templates = session.sql("SELECT TEMPLATE_NAME, DATA_TYPE, DESCRIPTION, MASKED_VALUE_EXAMPLE FROM HORIZON.POLICIES.MASKING_POLICY_TEMPLATES WHERE IS_ACTIVE = TRUE ORDER BY TEMPLATE_NAME, DATA_TYPE").to_pandas()
+        templates = session.sql("SELECT TEMPLATE_NAME, DATA_TYPE, DESCRIPTION, POLICY_BODY_TEMPLATE FROM PRISM_HORIZON.POLICIES.MASKING_POLICY_TEMPLATES WHERE IS_ACTIVE = TRUE ORDER BY TEMPLATE_NAME, DATA_TYPE").to_pandas()
         st.dataframe(templates, use_container_width=True, hide_index=True)
         st.markdown("---")
         policy_name = st.text_input("Policy Name", key="gm_name").strip().upper()
@@ -3890,7 +4344,7 @@ def ui_gov_masking_policies():
         comment = st.text_input("Comment", key="gm_comment")
         if st.button("Create Masking Policy", key="gm_create") and policy_name and tmpl and dtype and auth_role:
             try:
-                result = session.call("HORIZON.POLICIES.SP_GOV_CREATE_MASKING_POLICY", policy_name, dtype, tmpl, auth_role, comment)
+                result = session.call("PRISM_HORIZON.POLICIES.SP_GOV_CREATE_MASKING_POLICY", policy_name, dtype, tmpl, auth_role, comment)
                 import json
                 r = json.loads(result) if isinstance(result, str) else result
                 if r.get("status") == "SUCCESS":
@@ -3916,12 +4370,12 @@ def ui_gov_masking_policies():
                 cols = session.sql(f"SELECT COLUMN_NAME FROM {db}.INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{schema}' AND TABLE_NAME = '{tbl}' ORDER BY 1").to_pandas()["COLUMN_NAME"].tolist()
             except: pass
         col = st.selectbox("Column", cols, key="gm_col")
-        policies = session.sql("SELECT POLICY_NAME FROM HORIZON.POLICIES.POLICY_REGISTRY WHERE IS_ACTIVE = TRUE ORDER BY 1").to_pandas()["POLICY_NAME"].tolist()
+        policies = session.sql("SELECT POLICY_NAME FROM PRISM_HORIZON.POLICIES.POLICY_REGISTRY ORDER BY 1").to_pandas()["POLICY_NAME"].tolist()
         pol = st.selectbox("Masking Policy", policies if policies else [], key="gm_pol")
         if st.button("Apply Masking Policy", key="gm_apply") and db and schema and tbl and col and pol:
             try:
                 fqn = db + "." + schema + "." + tbl
-                result = session.call("HORIZON.POLICIES.SP_GOV_APPLY_MASKING_POLICY", fqn, col, pol)
+                result = session.call("PRISM_HORIZON.POLICIES.SP_GOV_APPLY_MASKING_POLICY", fqn, col, pol)
                 import json
                 r = json.loads(result) if isinstance(result, str) else result
                 if r.get("status") == "SUCCESS":
@@ -3932,7 +4386,7 @@ def ui_gov_masking_policies():
                 st.error("An error occurred. Please contact your administrator if this persists.")
     with tab3:
         try:
-            registry = session.sql("SELECT * FROM HORIZON.POLICIES.POLICY_REGISTRY ORDER BY CREATED_AT DESC").to_pandas()
+            registry = session.sql("SELECT * FROM PRISM_HORIZON.POLICIES.POLICY_REGISTRY ORDER BY CREATED_AT DESC").to_pandas()
             st.dataframe(registry, use_container_width=True, hide_index=True)
         except Exception as e:
             st.error("An error occurred. Please contact your administrator if this persists.")
@@ -3941,7 +4395,7 @@ def ui_gov_audit_log():
     """Governance audit log viewer."""
     st.header("Governance Audit Log")
     try:
-        df = session.sql("SELECT EVENT_TIME, INVOKED_BY, EVENT_TYPE, OBJECT_DATABASE, OBJECT_SCHEMA, OBJECT_NAME, OBJECT_TYPE, ACTION_DETAIL, STATUS, MESSAGE FROM HORIZON.AUDIT.GOV_AUDIT_LOG ORDER BY EVENT_TIME DESC LIMIT 200").to_pandas()
+        df = session.sql("SELECT EXECUTED_AT, INVOKED_BY, EVENT_TYPE, OBJECT_DATABASE, OBJECT_SCHEMA, OBJECT_NAME, OBJECT_TYPE, ACTION_DETAIL, STATUS, MESSAGE FROM PRISM_HORIZON.AUDIT.GOV_AUDIT_LOG ORDER BY EXECUTED_AT DESC LIMIT 200").to_pandas()
         if df.empty:
             st.info("No governance audit events yet.")
         else:
@@ -3962,7 +4416,7 @@ def ui_gov_audit_log():
 def call_ai(mode, user_input, context=""):
     """Call the AI assistant SP with model fallback."""
     try:
-        result = session.call("SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SP_AI_ASSISTANT", mode, user_input, context)
+        result = session.call("PRISM_SECURITY.ACCESS_CONTROL.SP_AI_ASSISTANT", mode, user_input, context)
         import json
         return json.loads(result) if isinstance(result, str) else result
     except Exception as e:
@@ -4057,29 +4511,29 @@ def execute_ai_action(action, params):
         session.sql(f"CALL {sp}('{env}','{db}','','','','','','{schema_csv}')").collect()
         return f"Database {env}_{db} created!"
     elif action == "CLONE_DATABASE":
-        session.call("SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SP_CLONE_DATABASE", params.get("source_db",""), params.get("target_db",""), params.get("target_env",""), "CURRENT", "", 0, "", False, False, False, True, True)
+        session.call("PRISM_SECURITY.ACCESS_CONTROL.SP_CLONE_DATABASE", params.get("source_db",""), params.get("target_db",""), params.get("target_env",""), "CURRENT", "", 0, "", False, False, False, True, True)
         return f"Cloned to {params.get('target_db','')}!"
     elif action == "CREATE_WAREHOUSE":
-        session.call("SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SP_CREATE_WAREHOUSE", params.get("env","DEV"), params.get("wh_type","GEN"), params.get("wh_size","SMALL"), params.get("wh_class","STANDARD"), "", 600, True, True, 1, 1, "STANDARD", False, 8, 172800, 0, 8, "", "", [])
+        session.call("PRISM_SECURITY.ACCESS_CONTROL.SP_CREATE_WAREHOUSE", params.get("env","DEV"), params.get("wh_type","GEN"), params.get("wh_size","SMALL"), params.get("wh_class","STANDARD"), "", 600, True, True, 1, 1, "STANDARD", False, 8, 172800, 0, 8, "", "", [])
         return "Warehouse created!"
     elif action == "CREATE_ROLE":
         sp = get_fully_qualified_name(CONFIG["STORED_PROCEDURES"]["DATABASE_CONTROLLER"])
         session.sql(f"CALL {sp}('{params.get('env','DEV')}','','','{params.get('function_name','')}','{params.get('role_type','Functional')}','{params.get('db_name','')}','{params.get('access_level','RO_AR')}','')").collect()
         return "Role created!"
     elif action == "SETUP_ENVIRONMENT":
-        session.call("SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SP_SETUP_ENVIRONMENT", params.get("env","DEV"))
+        session.call("PRISM_SECURITY.ACCESS_CONTROL.SP_SETUP_ENVIRONMENT", params.get("env","DEV"))
         return f"Environment {params.get('env','')} set up!"
     elif action == "CREATE_TAG":
-        session.call("HORIZON.TAGS.SP_GOV_CREATE_TAG", params.get("tag_name",""), params.get("comment",""), [])
+        session.call("PRISM_HORIZON.TAGS.SP_GOV_CREATE_TAG", params.get("tag_name",""), params.get("comment",""), [])
         return f"Tag {params.get('tag_name','')} created!"
     elif action == "APPLY_TAG":
-        session.call("HORIZON.TAGS.SP_GOV_APPLY_TAG", params.get("target_type","TABLE"), params.get("target_fqn",""), params.get("tag_name",""), params.get("tag_value",""), params.get("column_name",""))
+        session.call("PRISM_HORIZON.TAGS.SP_GOV_APPLY_TAG", params.get("target_type","TABLE"), params.get("target_fqn",""), params.get("tag_name",""), params.get("tag_value",""), params.get("column_name",""))
         return "Tag applied!"
     elif action == "CREATE_MASKING_POLICY":
-        session.call("HORIZON.POLICIES.SP_GOV_CREATE_MASKING_POLICY", params.get("policy_name",""), params.get("data_type","STRING"), params.get("template","FULL_MASK"), params.get("authorized_role",""), "")
+        session.call("PRISM_HORIZON.POLICIES.SP_GOV_CREATE_MASKING_POLICY", params.get("policy_name",""), params.get("data_type","STRING"), params.get("template","FULL_MASK"), params.get("authorized_role",""), "")
         return "Masking policy created!"
     elif action == "APPLY_MASKING_POLICY":
-        session.call("HORIZON.POLICIES.SP_GOV_APPLY_MASKING_POLICY", params.get("table_fqn",""), params.get("column_name",""), params.get("policy_name",""))
+        session.call("PRISM_HORIZON.POLICIES.SP_GOV_APPLY_MASKING_POLICY", params.get("table_fqn",""), params.get("column_name",""), params.get("policy_name",""))
         return "Masking policy applied!"
     elif action == "ASSIGN_ROLE":
         session.sql(f"GRANT ROLE {params.get('role_to_grant','')} TO ROLE {params.get('target_role','')}").collect()
@@ -4120,12 +4574,12 @@ def main():
         .sidebar-info-label { font-size: 0.8rem; opacity: 0.6; }
         .sidebar-info-value { font-weight: 600; font-size: 0.85rem; }
         .logo-card {
-            background: rgba(255,255,255,0.92); border-radius: 8px;
-            padding: 12px 16px; margin-bottom: 0.5rem; text-align: center;
-            border: 1px solid rgba(128,128,128,0.1);
+            background: transparent; border-radius: 8px;
+            padding: 0; margin-bottom: 0.5rem; text-align: center;
+            border: none;
         }
         @media (prefers-color-scheme: dark) {
-            .logo-card { background: rgba(255,255,255,0.95); }
+            .logo-card { background: transparent; }
         }
         .prism-title { font-size: 1.4rem; font-weight: 700; letter-spacing: 0.15em; margin: 0.5rem 0 0.2rem 0; }
         .prism-subtitle { font-size: 0.65rem; opacity: 0.5; letter-spacing: 0.03em; margin-bottom: 1rem; }
@@ -4151,8 +4605,11 @@ def main():
         st.markdown('<div class="logo-card">', unsafe_allow_html=True)
         st.image(SNOWFLAKE_LOGO_URL, width=180)
         st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown('<div class="prism-title">PRISM</div>', unsafe_allow_html=True)
+        st.markdown('<div class="prism-title" style="cursor:pointer;">PRISM</div>', unsafe_allow_html=True)
         st.markdown('<div class="prism-subtitle">Portal for Role Integration, Security & Management</div>', unsafe_allow_html=True)
+        if st.button("Home", key="btn_home", use_container_width=True, type="secondary"):
+            st.session_state.selected_action = ""
+            st.rerun()
         
 
         
@@ -4313,7 +4770,244 @@ def main():
     elif selected_action == AI_COMMAND:
         ui_ai_command()
     else:
-        st.info("Select an action from the sidebar to get started.")
+        ui_homepage()
+
+
+def ui_homepage():
+    """PRISM Control Plane dashboard — shown on app launch."""
+    st.markdown("""
+        <style>
+        .metric-card {
+            background: rgba(128,128,128,0.06);
+            border: 1px solid rgba(128,128,128,0.12);
+            border-radius: 10px;
+            padding: 1.2rem 1rem;
+            text-align: center;
+        }
+        .metric-card .metric-value {
+            font-size: 2.2rem;
+            font-weight: 700;
+            line-height: 1.1;
+        }
+        .metric-card .metric-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            opacity: 0.6;
+            margin-top: 0.3rem;
+        }
+        .env-card {
+            background: rgba(128,128,128,0.04);
+            border: 1px solid rgba(128,128,128,0.1);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 0.5rem;
+        }
+        .env-card .env-name {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 0.4rem;
+        }
+        .env-stat {
+            display: inline-block;
+            margin-right: 1rem;
+            font-size: 0.85rem;
+        }
+        .env-stat b { font-size: 1.1rem; }
+        .quick-action-btn { margin-bottom: 0.3rem; }
+        .activity-row {
+            padding: 0.4rem 0;
+            border-bottom: 1px solid rgba(128,128,128,0.08);
+            font-size: 0.85rem;
+        }
+        .status-success { color: #4caf50; font-weight: 600; }
+        .status-error { color: #f44336; font-weight: 600; }
+        .status-info { color: #2196f3; font-weight: 600; }
+        .section-title {
+            font-size: 0.85rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            opacity: 0.5;
+            margin: 1.5rem 0 0.8rem 0;
+            padding-bottom: 0.4rem;
+            border-bottom: 1px solid rgba(128,128,128,0.15);
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown("## Control Plane")
+    st.caption("Real-time overview of your Snowflake RBAC environment")
+
+    env_colors = {"DEV": "#42a5f5", "SIT": "#ff9800", "UAT": "#ffca28", "PROD": "#ef5350", "LAB": "#66bb6a"}
+
+    try:
+        env_count = session.sql(f"SELECT COUNT(*) FROM {get_fully_qualified_name(CONFIG['TABLES']['ENVIRONMENTS'])}").collect()[0][0]
+    except:
+        env_count = 0
+    try:
+        db_count = len(get_databases())
+    except:
+        db_count = 0
+    try:
+        role_result = session.sql("SELECT COUNT(*) FROM SNOWFLAKE.ACCOUNT_USAGE.ROLES WHERE DELETED_ON IS NULL").collect()
+        role_count = role_result[0][0] if role_result else 0
+    except:
+        role_count = "N/A"
+    try:
+        priv_count = session.sql(f"SELECT COUNT(*) FROM {get_fully_qualified_name(CONFIG['TABLES']['SNOWFLAKE_PRIVILEGE_CATALOG'])}").collect()[0][0]
+    except:
+        priv_count = 0
+    try:
+        profile_count = session.sql(f"SELECT COUNT(*) FROM {get_fully_qualified_name(CONFIG['TABLES']['ACCESS_PROFILES'])} WHERE IS_ACTIVE = TRUE").collect()[0][0]
+    except:
+        profile_count = 0
+    try:
+        sync_result = session.sql(f"SELECT MAX(LAST_SYNCED_AT) FROM {get_fully_qualified_name(CONFIG['TABLES']['SNOWFLAKE_PRIVILEGE_CATALOG'])}").collect()
+        last_sync = str(sync_result[0][0])[:10] if sync_result and sync_result[0][0] else "Never"
+    except:
+        last_sync = "N/A"
+
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+        st.markdown(f'<div class="metric-card"><div class="metric-value">{env_count}</div><div class="metric-label">Environments</div></div>', unsafe_allow_html=True)
+    with m2:
+        st.markdown(f'<div class="metric-card"><div class="metric-value">{db_count}</div><div class="metric-label">Databases</div></div>', unsafe_allow_html=True)
+    with m3:
+        st.markdown(f'<div class="metric-card"><div class="metric-value">{role_count}</div><div class="metric-label">Account Roles</div></div>', unsafe_allow_html=True)
+    with m4:
+        st.markdown(f'<div class="metric-card"><div class="metric-value">{profile_count}</div><div class="metric-label">Access Profiles</div></div>', unsafe_allow_html=True)
+
+    st.markdown("")
+    s1, s2 = st.columns(2)
+    with s1:
+        st.markdown(f'<div class="metric-card"><div class="metric-value">{priv_count}</div><div class="metric-label">Cataloged Privileges</div></div>', unsafe_allow_html=True)
+    with s2:
+        st.markdown(f'<div class="metric-card"><div class="metric-value">{last_sync}</div><div class="metric-label">Last Catalog Sync</div></div>', unsafe_allow_html=True)
+
+    st.markdown("")
+
+    col_left, col_right = st.columns([2, 1])
+
+    with col_left:
+        st.markdown('<div class="section-title">Environment Health</div>', unsafe_allow_html=True)
+
+        environments = get_environments()
+        all_dbs = get_databases()
+
+        for env_name in environments:
+            color = env_colors.get(env_name, "#90a4ae")
+            env_dbs = [d for d in all_dbs if d.startswith(f"{env_name}_")]
+            env_db_count = len(env_dbs)
+
+            env_role_count = 0
+            try:
+                for db in env_dbs[:5]:
+                    try:
+                        r = session.sql(f"SELECT COUNT(*) FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))").collect()
+                    except:
+                        pass
+            except:
+                pass
+
+            db_role_total = 0
+            for db in env_dbs:
+                try:
+                    dr = session.sql(f"SELECT COUNT(*) FROM {db}.INFORMATION_SCHEMA.TABLE_PRIVILEGES WHERE 1=0").collect()
+                except:
+                    pass
+
+            schema_total = 0
+            for db in env_dbs:
+                try:
+                    sc = session.sql(f"SELECT COUNT(*) FROM {db}.INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME NOT IN ('INFORMATION_SCHEMA', 'PUBLIC')").collect()
+                    schema_total += sc[0][0] if sc else 0
+                except:
+                    pass
+
+            st.markdown(f"""
+                <div class="env-card">
+                    <div class="env-name" style="color: {color};">{env_name}</div>
+                    <span class="env-stat"><b>{env_db_count}</b> databases</span>
+                    <span class="env-stat"><b>{schema_total}</b> schemas</span>
+                </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown('<div class="section-title">Recent Activity</div>', unsafe_allow_html=True)
+        try:
+            audit_df = session.sql(f"""
+                SELECT EXECUTED_AT, INVOKED_BY, EVENT_TYPE, TARGET_OBJECT, STATUS
+                FROM {get_fully_qualified_name(CONFIG['TABLES']['AUDIT_LOG'], False, True)}
+                ORDER BY EXECUTED_AT DESC
+                LIMIT 10
+            """).to_pandas()
+
+            if audit_df.empty:
+                st.info("No recent activity recorded.")
+            else:
+                for _, row in audit_df.iterrows():
+                    status = str(row.get("STATUS", ""))
+                    css_class = "status-success" if status == "SUCCESS" else "status-error" if status == "ERROR" else "status-info"
+                    ts = str(row.get("EXECUTED_AT", ""))[:16]
+                    user = str(row.get("INVOKED_BY", ""))
+                    event = str(row.get("EVENT_TYPE", ""))
+                    target = str(row.get("TARGET_OBJECT", ""))[:40]
+                    st.markdown(f'<div class="activity-row"><span class="{css_class}">{status}</span> &nbsp; <b>{event}</b> on <code>{target}</code> &nbsp; <span style="opacity:0.5">{user} &middot; {ts}</span></div>', unsafe_allow_html=True)
+        except Exception as e:
+            st.info("No audit data available yet.")
+
+    with col_right:
+        st.markdown('<div class="section-title">Quick Actions</div>', unsafe_allow_html=True)
+
+        if st.button("Create Database", key="qa_create_db", use_container_width=True):
+            st.session_state.selected_action = CREATE_DATABASE
+            st.rerun()
+        if st.button("Create Role", key="qa_create_role", use_container_width=True):
+            st.session_state.selected_action = CREATE_ROLE
+            st.rerun()
+        if st.button("Create Warehouse", key="qa_create_wh", use_container_width=True):
+            st.session_state.selected_action = CREATE_WAREHOUSE
+            st.rerun()
+        if st.button("Sync Privilege Catalog", key="qa_sync", use_container_width=True):
+            with st.spinner("Syncing..."):
+                try:
+                    result = session.sql("CALL PRISM_SECURITY.ACCESS_CONTROL.SP_SYNC_PRIVILEGE_CATALOG()").collect()
+                    st.success(result[0][0] if result else "Sync complete")
+                except Exception as e:
+                    st.error(f"Sync failed: {e}")
+        if st.button("View RBAC Architecture", key="qa_rbac", use_container_width=True):
+            st.session_state.selected_action = DISPLAY_RBAC_ARCHITECTURE
+            st.rerun()
+
+        st.markdown('<div class="section-title">Privilege Drift</div>', unsafe_allow_html=True)
+        try:
+            drift_count = session.sql(f"SELECT COUNT(*) FROM {get_fully_qualified_name('V_PRIVILEGE_DRIFT')}").collect()[0][0]
+            if drift_count == 0:
+                st.success("No drift detected")
+            else:
+                st.warning(f"{drift_count} unassigned privilege(s)")
+                if st.button("Review Drift", key="qa_drift", use_container_width=True):
+                    st.session_state.selected_action = PRIVILEGE_DRIFT
+                    st.rerun()
+        except:
+            st.info("Run catalog sync first")
+
+        st.markdown('<div class="section-title">Governance</div>', unsafe_allow_html=True)
+        gov_col1, gov_col2 = st.columns(2)
+        try:
+            mask_count = session.sql("SELECT COUNT(*) FROM SNOWFLAKE.ACCOUNT_USAGE.MASKING_POLICIES WHERE DELETED IS NULL").collect()[0][0]
+            with gov_col1:
+                st.metric("Masking Policies", mask_count)
+        except:
+            with gov_col1:
+                st.metric("Masking Policies", "N/A")
+        try:
+            tag_count = session.sql("SELECT COUNT(*) FROM SNOWFLAKE.ACCOUNT_USAGE.TAG_REFERENCES").collect()[0][0]
+            with gov_col2:
+                st.metric("Tag Assignments", tag_count)
+        except:
+            with gov_col2:
+                st.metric("Tag Assignments", "N/A")
 
 
 def ui_privilege_drift():
@@ -4323,9 +5017,11 @@ def ui_privilege_drift():
 
     try:
         drift_query = f"""
-        SELECT OBJECT_TYPE, PRIVILEGE, PARENT_SCOPE, SUPPORTS_ALL, SUPPORTS_FUTURE, LAST_SYNCED_AT
-        FROM {get_fully_qualified_name('V_PRIVILEGE_DRIFT')}
-        ORDER BY PARENT_SCOPE, OBJECT_TYPE, PRIVILEGE
+        SELECT d.OBJECT_TYPE, d.PRIVILEGE, d.PARENT_SCOPE, c.SUPPORTS_ALL, c.SUPPORTS_FUTURE, c.LAST_SYNCED_AT
+        FROM {get_fully_qualified_name('V_PRIVILEGE_DRIFT')} d
+        JOIN {get_fully_qualified_name(CONFIG['TABLES']['SNOWFLAKE_PRIVILEGE_CATALOG'])} c
+          ON d.OBJECT_TYPE = c.OBJECT_TYPE AND d.PRIVILEGE = c.PRIVILEGE AND d.PARENT_SCOPE = c.PARENT_SCOPE
+        ORDER BY d.PARENT_SCOPE, d.OBJECT_TYPE, d.PRIVILEGE
         """
         drift_df = session.sql(drift_query).to_pandas()
 
@@ -4382,9 +5078,9 @@ def ui_access_profiles():
         st.subheader("Role Hierarchy")
         try:
             hierarchy_query = f"""
-            SELECT PARENT_PROFILE, CHILD_PROFILE, ROLE_SUFFIX, DEPTH, INHERITANCE_CHAIN, DESCRIPTION
+            SELECT CHILD_PROFILE, CHILD_SUFFIX, PARENT_PROFILE, PARENT_SUFFIX, HIERARCHY_ORDER
             FROM {get_fully_qualified_name('V_ROLE_HIERARCHY')}
-            ORDER BY PARENT_PROFILE, DEPTH
+            ORDER BY HIERARCHY_ORDER
             """
             hierarchy_df = session.sql(hierarchy_query).to_pandas()
             st.dataframe(hierarchy_df, use_container_width=True, hide_index=True)

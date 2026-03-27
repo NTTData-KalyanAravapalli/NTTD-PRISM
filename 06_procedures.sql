@@ -3,8 +3,8 @@
 -- Auto-generated from live installation
 -- ============================================================
 
-USE ROLE IDENTIFIER($PRISM_APP_ROLE);
-USE SCHEMA IDENTIFIER($PRISM_SECURITY_DB || '.' || $PRISM_SECURITY_SCHEMA);
+USE ROLE PRISM_APP_ROLE;
+USE SCHEMA PRISM_SECURITY.ACCESS_CONTROL;
 
 -- SP_VALIDATE_IDENTIFIER
 CREATE OR REPLACE PROCEDURE SP_VALIDATE_IDENTIFIER(P_VALUE VARCHAR)
@@ -22,7 +22,7 @@ def run(session, p_value):
 ';
 
 -- SP_SYNC_PRIVILEGE_CATALOG
-CREATE OR REPLACE PROCEDURE SP_SYNC_PRIVILEGE_CATALOG)
+CREATE OR REPLACE PROCEDURE SP_SYNC_PRIVILEGE_CATALOG()
 RETURNS VARCHAR
 LANGUAGE SQL
 EXECUTE AS OWNER
@@ -30,7 +30,7 @@ AS '
 BEGIN
     CALL EXPLAIN_GRANTABLE_PRIVILEGES();
 
-    MERGE INTO SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SNOWFLAKE_PRIVILEGE_CATALOG AS tgt
+    MERGE INTO PRISM_SECURITY.ACCESS_CONTROL.SNOWFLAKE_PRIVILEGE_CATALOG AS tgt
     USING (
         WITH raw AS (
             SELECT PARSE_JSON(EXPLAIN_GRANTABLE_PRIVILEGES) AS j
@@ -69,7 +69,7 @@ BEGIN
         CURRENT_TIMESTAMP(), CURRENT_USER()
     );
 
-    LET row_count INTEGER := (SELECT COUNT(*) FROM SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SNOWFLAKE_PRIVILEGE_CATALOG);
+    LET row_count INTEGER := (SELECT COUNT(*) FROM PRISM_SECURITY.ACCESS_CONTROL.SNOWFLAKE_PRIVILEGE_CATALOG);
     RETURN ''Sync complete. Catalog now contains '' || :row_count || '' privilege entries.'';
 END;
 ';
@@ -86,7 +86,7 @@ DECLARE
   MESSAGE STRING;
   INVOKED_BY STRING := CURRENT_USER();
 BEGIN
-  SELECT OPERATIONS_UNDER_DEVELOPMENT.LOGS.SEQ_AUDIT_LOG.NEXTVAL INTO :ID;
+  SELECT PRISM_OPERATIONS.LOGS.SEQ_AUDIT_LOG.NEXTVAL INTO :ID;
 
   -- If only ENV is provided (no DB, no function), set up environment roles
   IF (:P_DB_CSV = '''' AND :P_FUNCTION_NAME = '''') THEN
@@ -127,17 +127,17 @@ AS 'def run(session, p_env):
     user = session.sql("SELECT CURRENT_USER()").collect()[0][0]
 
     env_exists = session.sql(
-        "SELECT COUNT(*) FROM SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.ENVIRONMENTS WHERE ENVIRONMENT_NAME = " + q + p_env + q
+        "SELECT COUNT(*) FROM PRISM_SECURITY.ACCESS_CONTROL.ENVIRONMENTS WHERE ENVIRONMENT_NAME = " + q + p_env + q
     ).collect()[0][0]
     if env_exists == 0:
-        return session.create_dataframe([("", "", ERROR, "Environment " + p_env + " not found in ENVIRONMENTS table")],
-            schema=[ROLE_NAME, PARENT_ROLE, STATUS, MESSAGE])
+        return session.create_dataframe([("", "", "ERROR", "Environment " + p_env + " not found in ENVIRONMENTS table")],
+            schema=["ROLE_NAME", "PARENT_ROLE", "STATUS", "MESSAGE"])
 
-    audit_id = session.sql("SELECT OPERATIONS_UNDER_DEVELOPMENT.LOGS.SEQ_AUDIT_LOG.NEXTVAL").collect()[0][0]
+    audit_id = session.sql("SELECT PRISM_OPERATIONS.LOGS.SEQ_AUDIT_LOG.NEXTVAL").collect()[0][0]
 
     role_templates = session.sql(
         "SELECT ROLE_TEMPLATE, PARENT_SYSTEM_ROLE, DESCRIPTION, HIERARCHY_ORDER "
-        "FROM SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.ENVIRONMENT_ROLE_METADATA "
+        "FROM PRISM_SECURITY.ACCESS_CONTROL.ENVIRONMENT_ROLE_METADATA "
         "WHERE IS_ACTIVE = TRUE ORDER BY HIERARCHY_ORDER"
     ).collect()
 
@@ -160,43 +160,43 @@ AS 'def run(session, p_env):
                 session.sql("ALTER ROLE " + role_name + " SET COMMENT = " + q + safe_desc + q).collect()
             except:
                 pass
-            session.sql("INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (" + str(audit_id) + ", CURRENT_TIMESTAMP(), " + q + user + q + ", " + q + CREATE_ENV_ROLE + q + ", " + q + role_name + q + ", " + q + "CREATE ROLE IF NOT EXISTS " + role_name + q + ", " + q + SUCCESS + q + ", " + q + q + ")").collect()
-            results.append((role_name, parent_role, CREATED, "Role created successfully"))
+            session.sql("INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (" + str(audit_id) + ", CURRENT_TIMESTAMP(), " + q + user + q + ", " + q + "CREATE_ENV_ROLE" + q + ", " + q + role_name + q + ", " + q + "CREATE ROLE IF NOT EXISTS " + role_name + q + ", " + q + "SUCCESS" + q + ", " + q + q + ")").collect()
+            results.append((role_name, parent_role, "CREATED", "Role created successfully"))
         except Exception as e:
-            results.append((role_name, parent_role, ERROR, str(e)[:200]))
+            results.append((role_name, parent_role, "ERROR", str(e)[:200]))
             continue
 
         try:
             session.sql("GRANT ROLE " + role_name + " TO ROLE " + parent_role).collect()
-            session.sql("INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (" + str(audit_id) + ", CURRENT_TIMESTAMP(), " + q + user + q + ", " + q + GRANT_ENV_ROLE_TO_PARENT + q + ", " + q + role_name + q + ", " + q + "GRANT ROLE " + role_name + " TO ROLE " + parent_role + q + ", " + q + SUCCESS + q + ", " + q + q + ")").collect()
-            results.append((role_name, parent_role, GRANTED, "Granted to " + parent_role))
+            session.sql("INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (" + str(audit_id) + ", CURRENT_TIMESTAMP(), " + q + user + q + ", " + q + "GRANT_ENV_ROLE_TO_PARENT" + q + ", " + q + role_name + q + ", " + q + "GRANT ROLE " + role_name + " TO ROLE " + parent_role + q + ", " + q + "SUCCESS" + q + ", " + q + q + ")").collect()
+            results.append((role_name, parent_role, "GRANTED", "Granted to " + parent_role))
         except Exception as e:
-            results.append((role_name, parent_role, GRANT_ERROR, str(e)[:200]))
+            results.append((role_name, parent_role, "GRANT_ERROR", str(e)[:200]))
 
     sysadmin_role = None
     useradmin_role = None
     for tmpl in role_templates:
         rn = tmpl[0].replace("<ENV>", p_env)
-        if SYSADMIN in tmpl[0] and tmpl[1] == SYSADMIN:
+        if "SYSADMIN" in tmpl[0] and tmpl[1] == "SYSADMIN":
             sysadmin_role = rn
-        if USERADMIN in tmpl[0] and tmpl[1] == USERADMIN:
+        if "USERADMIN" in tmpl[0] and tmpl[1] == "USERADMIN":
             useradmin_role = rn
 
     if sysadmin_role:
         try:
             session.sql("GRANT CREATE DATABASE ON ACCOUNT TO ROLE " + sysadmin_role).collect()
-            results.append((sysadmin_role, "", PRIVILEGE, "Granted CREATE DATABASE"))
+            results.append((sysadmin_role, "", "PRIVILEGE", "Granted CREATE DATABASE"))
         except:
             pass
 
     if useradmin_role:
         try:
             session.sql("GRANT CREATE ROLE ON ACCOUNT TO ROLE " + useradmin_role).collect()
-            results.append((useradmin_role, "", PRIVILEGE, "Granted CREATE ROLE"))
+            results.append((useradmin_role, "", "PRIVILEGE", "Granted CREATE ROLE"))
         except:
             pass
 
-    return session.create_dataframe(results, schema=[ROLE_NAME, PARENT_ROLE, STATUS, MESSAGE])
+    return session.create_dataframe(results, schema=["ROLE_NAME", "PARENT_ROLE", "STATUS", "MESSAGE"])
 ';
 
 -- SP_CREATE_DB_ROLE
@@ -210,12 +210,12 @@ DECLARE
   V_LINE STRING;
 BEGIN
   EXECUTE IMMEDIATE ''CREATE OR REPLACE DATABASE ROLE '' || :P_DB_NAME || ''.'' || :P_ROLE_NAME;
-  INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''CREATE_ROLE'', :P_ROLE_NAME,
+  INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''CREATE_ROLE'', :P_ROLE_NAME,
     ''CREATE OR REPLACE DATABASE ROLE '' || :P_DB_NAME || ''.'' || :P_ROLE_NAME, ''SUCCESS'', '''');
   EXCEPTION WHEN OTHER THEN
     SUCCESS := FALSE;
     V_LINE := SQLCODE || '': '' || SQLERRM;
-    INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''CREATE_DATABASE_ROLE'', :P_ROLE_NAME,
+    INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''CREATE_DATABASE_ROLE'', :P_ROLE_NAME,
       ''CREATE OR REPLACE DATABASE ROLE '' || :P_DB_NAME || ''.'' || :P_ROLE_NAME, ''ERROR'', :V_LINE);
   RETURN :SUCCESS;
 END;
@@ -232,24 +232,24 @@ DECLARE
   V_LINE STRING;
 BEGIN
   EXECUTE IMMEDIATE ''CREATE ROLE IF NOT EXISTS "'' || :P_ROLE_NAME || ''"'';
-  INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''CREATE_ROLE'', :P_ROLE_NAME,
+  INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''CREATE_ROLE'', :P_ROLE_NAME,
     ''CREATE ROLE IF NOT EXISTS "'' || :P_ROLE_NAME || ''"'', ''SUCCESS'', '''');
 
   IF (:P_OWNER_ROLE IS NOT NULL) THEN
     BEGIN
       EXECUTE IMMEDIATE ''GRANT OWNERSHIP ON ROLE '' || :P_ROLE_NAME || '' TO ROLE '' || :P_OWNER_ROLE || '' REVOKE CURRENT GRANTS'';
-      INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''GRANT_ROLE_OWNER'', :P_ROLE_NAME,
+      INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''GRANT_ROLE_OWNER'', :P_ROLE_NAME,
         ''GRANT OWNERSHIP ON ROLE '' || :P_ROLE_NAME || '' TO ROLE '' || :P_OWNER_ROLE || '' REVOKE CURRENT GRANTS'', ''SUCCESS'', '''');
     EXCEPTION WHEN OTHER THEN
       V_LINE := SQLCODE || '': '' || SQLERRM;
-      INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''GRANT_ROLE_OWNER'', :P_ROLE_NAME,
+      INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''GRANT_ROLE_OWNER'', :P_ROLE_NAME,
         ''GRANT OWNERSHIP ON ROLE '' || :P_ROLE_NAME || '' TO ROLE '' || :P_OWNER_ROLE, ''ERROR'', :V_LINE);
     END;
   END IF;
   RETURN :SUCCESS;
   EXCEPTION WHEN OTHER THEN
     V_LINE := SQLCODE || '': '' || SQLERRM;
-    INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''CREATE_ROLE'', :P_ROLE_NAME, ''CREATE ROLE'', ''ERROR'', :V_LINE);
+    INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''CREATE_ROLE'', :P_ROLE_NAME, ''CREATE ROLE'', ''ERROR'', :V_LINE);
     RETURN FALSE;
 END;
 ';
@@ -266,19 +266,19 @@ AS 'import concurrent.futures
 def run(session, p_id, p_target_role, p_db_name, p_access_code, p_user, p_grant_target, p_schema_name):
     q = chr(39)
     fq_role = p_db_name + "." + p_target_role
-    is_schema = p_grant_target == SCHEMA
+    is_schema = p_grant_target == "SCHEMA"
     scope_obj = p_db_name + "." + p_schema_name if is_schema and p_schema_name else p_db_name
-    event_type = GRANT_SCHEMA_PRIVILEGE if is_schema else GRANT_PRIVILEGE
+    event_type = "GRANT_SCHEMA_PRIVILEGE" if is_schema else "GRANT_PRIVILEGE"
 
     rows = session.sql(
         "SELECT pp.OBJECT_TYPE, c.OBJECT_TYPE_PLURAL, pp.PRIVILEGE "
-        "FROM SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.ACCESS_PROFILE_PRIVILEGES pp "
-        "JOIN SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SNOWFLAKE_PRIVILEGE_CATALOG c "
-        "ON pp.OBJECT_TYPE = c.OBJECT_TYPE AND c.PARENT_SCOPE IN (" + q + SCHEMA + q + "," + q + DATABASE + q + ") "
+        "FROM PRISM_SECURITY.ACCESS_CONTROL.ACCESS_PROFILE_PRIVILEGES pp "
+        "JOIN PRISM_SECURITY.ACCESS_CONTROL.SNOWFLAKE_PRIVILEGE_CATALOG c "
+        "ON pp.OBJECT_TYPE = c.OBJECT_TYPE AND c.PARENT_SCOPE IN (" + q + "SCHEMA" + q + "," + q + "DATABASE" + q + ") "
         "WHERE pp.ACCESS_CODE = " + q + str(p_access_code) + q + " "
         "AND pp.GRANT_TARGET = " + q + str(p_grant_target) + q + " "
         "AND pp.IS_ACTIVE = TRUE "
-        "AND pp.PRIVILEGE != " + q + OWNERSHIP + q + " "
+        "AND pp.PRIVILEGE != " + q + "OWNERSHIP" + q + " "
         "GROUP BY pp.OBJECT_TYPE, c.OBJECT_TYPE_PLURAL, pp.PRIVILEGE"
     ).collect()
 
@@ -288,9 +288,9 @@ def run(session, p_id, p_target_role, p_db_name, p_access_code, p_user, p_grant_
 
     for r in rows:
         ot, otp, pr = r[0], r[1], r[2]
-        if ot == DATABASE:
+        if ot == "DATABASE":
             stmts.append("GRANT " + pr + " ON DATABASE " + p_db_name + " TO DATABASE ROLE " + fq_role)
-        elif ot == SCHEMA:
+        elif ot == "SCHEMA":
             if is_schema:
                 stmts.append("GRANT " + pr + " ON SCHEMA " + scope_obj + " TO DATABASE ROLE " + fq_role)
             else:
@@ -305,20 +305,20 @@ def run(session, p_id, p_target_role, p_db_name, p_access_code, p_user, p_grant_
     def do_grant(s):
         try:
             session.sql(s).collect()
-            return (SUCCESS, s, "")
+            return ("SUCCESS", s, "")
         except Exception as e:
-            return (ERROR, s, str(e)[:200])
+            return ("ERROR", s, str(e)[:200])
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
         futs = [ex.submit(do_grant, s) for s in stmts]
         for f in concurrent.futures.as_completed(futs):
             st, sql_s, msg = f.result()
-            if st == SUCCESS:
+            if st == "SUCCESS":
                 ok += 1
             try:
                 ss = sql_s.replace(q, q+q)
                 mm = msg.replace(q, q+q)
-                session.sql("INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (" + str(p_id) + ", CURRENT_TIMESTAMP(), " + q + str(p_user) + q + ", " + q + event_type + q + ", " + q + str(p_target_role) + q + ", " + q + ss + q + ", " + q + st + q + ", " + q + mm + q + ")").collect()
+                session.sql("INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (" + str(p_id) + ", CURRENT_TIMESTAMP(), " + q + str(p_user) + q + ", " + q + event_type + q + ", " + q + str(p_target_role) + q + ", " + q + ss + q + ", " + q + st + q + ", " + q + mm + q + ")").collect()
             except:
                 pass
     return ok > 0
@@ -338,14 +338,14 @@ DECLARE
   V_DB_OWNER STRING;
   CUR_HIERARCHY CURSOR FOR
     SELECT child.ROLE_SUFFIX AS CHILD_SUFFIX, parent.ROLE_SUFFIX AS PARENT_SUFFIX
-    FROM SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.ACCESS_PROFILES child
-    JOIN SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.ACCESS_PROFILES parent
+    FROM PRISM_SECURITY.ACCESS_CONTROL.ACCESS_PROFILES child
+    JOIN PRISM_SECURITY.ACCESS_CONTROL.ACCESS_PROFILES parent
       ON child.HIERARCHY_PARENT = parent.ACCESS_CODE
     WHERE child.IS_ACTIVE = TRUE AND parent.IS_ACTIVE = TRUE
     ORDER BY child.HIERARCHY_ORDER;
   CUR_PROFILES CURSOR FOR
     SELECT ROLE_SUFFIX
-    FROM SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.ACCESS_PROFILES
+    FROM PRISM_SECURITY.ACCESS_CONTROL.ACCESS_PROFILES
     WHERE IS_ACTIVE = TRUE
     ORDER BY HIERARCHY_ORDER;
   V_SUFFIX STRING;
@@ -355,13 +355,13 @@ BEGIN
   -- Get ownership roles from ENVIRONMENT_ROLE_METADATA
   V_DB_ROLE_OWNER := (
     SELECT REPLACE(ROLE_TEMPLATE, ''<ENV>'', :P_ENV)
-    FROM SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.ENVIRONMENT_ROLE_METADATA
+    FROM PRISM_SECURITY.ACCESS_CONTROL.ENVIRONMENT_ROLE_METADATA
     WHERE OWNS_DB_ROLES = TRUE AND IS_ACTIVE = TRUE
     LIMIT 1
   );
   V_DB_OWNER := (
     SELECT REPLACE(ROLE_TEMPLATE, ''<ENV>'', :P_ENV)
-    FROM SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.ENVIRONMENT_ROLE_METADATA
+    FROM PRISM_SECURITY.ACCESS_CONTROL.ENVIRONMENT_ROLE_METADATA
     WHERE OWNS_DATABASES = TRUE AND IS_ACTIVE = TRUE
     LIMIT 1
   );
@@ -380,10 +380,10 @@ BEGIN
     BEGIN
       V_GRANT_SQL := ''GRANT OWNERSHIP ON DATABASE ROLE '' || :P_DB_NAME || ''.'' || :V_SUFFIX || '' TO ROLE '' || :V_DB_ROLE_OWNER || '' COPY CURRENT GRANTS'';
       EXECUTE IMMEDIATE :V_GRANT_SQL;
-      INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''SET_DB_ROLE_OWNERSHIP'', :V_SUFFIX, :V_GRANT_SQL, ''SUCCESS'', '''');
+      INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''SET_DB_ROLE_OWNERSHIP'', :V_SUFFIX, :V_GRANT_SQL, ''SUCCESS'', '''');
     EXCEPTION WHEN OTHER THEN
       V_LINE := SQLCODE || '': '' || SQLERRM;
-      INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''SET_DB_ROLE_OWNERSHIP'', :V_SUFFIX, :V_GRANT_SQL, ''ERROR'', :V_LINE);
+      INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''SET_DB_ROLE_OWNERSHIP'', :V_SUFFIX, :V_GRANT_SQL, ''ERROR'', :V_LINE);
     END;
   END FOR;
 
@@ -395,25 +395,25 @@ BEGIN
     BEGIN
       V_GRANT_SQL := ''GRANT DATABASE ROLE '' || :P_DB_NAME || ''.'' || :V_CHILD || '' TO DATABASE ROLE '' || :P_DB_NAME || ''.'' || :V_PARENT;
       EXECUTE IMMEDIATE :V_GRANT_SQL;
-      INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''SET_DB_ROLE_HIERARCHY'', :V_CHILD, :V_GRANT_SQL, ''SUCCESS'', '''');
+      INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''SET_DB_ROLE_HIERARCHY'', :V_CHILD, :V_GRANT_SQL, ''SUCCESS'', '''');
     EXCEPTION WHEN OTHER THEN
       V_LINE := SQLCODE || '': '' || SQLERRM;
-      INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''SET_DB_ROLE_HIERARCHY'', :V_CHILD, :V_GRANT_SQL, ''ERROR'', :V_LINE);
+      INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''SET_DB_ROLE_HIERARCHY'', :V_CHILD, :V_GRANT_SQL, ''ERROR'', :V_LINE);
     END;
   END FOR;
 
   -- Grant top-level OWN_AR to <ENV>_SYSADMIN (from metadata)
   BEGIN
     V_GRANT_SQL := ''GRANT DATABASE ROLE '' || :P_DB_NAME || ''.'' || (
-      SELECT ROLE_SUFFIX FROM SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.ACCESS_PROFILES
+      SELECT ROLE_SUFFIX FROM PRISM_SECURITY.ACCESS_CONTROL.ACCESS_PROFILES
       WHERE HIERARCHY_PARENT IS NULL AND IS_SYSTEM_ONLY = TRUE AND IS_ACTIVE = TRUE
       ORDER BY HIERARCHY_ORDER LIMIT 1
     ) || '' TO ROLE '' || :V_DB_OWNER;
     EXECUTE IMMEDIATE :V_GRANT_SQL;
-    INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''GRANT_TOP_ROLE_TO_SYSADMIN'', :P_DB_NAME, :V_GRANT_SQL, ''SUCCESS'', '''');
+    INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''GRANT_TOP_ROLE_TO_SYSADMIN'', :P_DB_NAME, :V_GRANT_SQL, ''SUCCESS'', '''');
   EXCEPTION WHEN OTHER THEN
     V_LINE := SQLCODE || '': '' || SQLERRM;
-    INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''GRANT_TOP_ROLE_TO_SYSADMIN'', :P_DB_NAME, :V_GRANT_SQL, ''ERROR'', :V_LINE);
+    INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''GRANT_TOP_ROLE_TO_SYSADMIN'', :P_DB_NAME, :V_GRANT_SQL, ''ERROR'', :V_LINE);
   END;
 
   RETURN :SUCCESS;
@@ -432,8 +432,8 @@ DECLARE
   V_SCHEMA_ROLE_PREFIX STRING;
   CUR_HIERARCHY CURSOR FOR
     SELECT child.ROLE_SUFFIX AS CHILD_SUFFIX, parent.ROLE_SUFFIX AS PARENT_SUFFIX
-    FROM SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.ACCESS_PROFILES child
-    JOIN SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.ACCESS_PROFILES parent
+    FROM PRISM_SECURITY.ACCESS_CONTROL.ACCESS_PROFILES child
+    JOIN PRISM_SECURITY.ACCESS_CONTROL.ACCESS_PROFILES parent
       ON child.HIERARCHY_PARENT = parent.ACCESS_CODE
     WHERE child.IS_ACTIVE = TRUE AND parent.IS_ACTIVE = TRUE
     ORDER BY child.HIERARCHY_ORDER;
@@ -451,12 +451,12 @@ BEGIN
                    '' TO DATABASE ROLE '' || :P_DB_NAME || ''.'' || :V_SCHEMA_ROLE_PREFIX || :V_PARENT;
     BEGIN
       EXECUTE IMMEDIATE :V_GRANT_SQL;
-      INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''GRANT_SCHEMA_ROLE_HIERARCHY'',
+      INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''GRANT_SCHEMA_ROLE_HIERARCHY'',
         :V_SCHEMA_ROLE_PREFIX || :V_CHILD, :V_GRANT_SQL, ''SUCCESS'', '''');
     EXCEPTION WHEN OTHER THEN
       SUCCESS := FALSE;
       V_LINE := SQLCODE || '': '' || SQLERRM;
-      INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''GRANT_SCHEMA_ROLE_HIERARCHY'',
+      INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''GRANT_SCHEMA_ROLE_HIERARCHY'',
         :V_SCHEMA_ROLE_PREFIX || :V_CHILD, :V_GRANT_SQL, ''ERROR'', :V_LINE);
     END;
   END FOR;
@@ -477,7 +477,7 @@ DECLARE
   V_GRANT_SQL STRING;
   CUR_AC CURSOR FOR
     SELECT ACCESS_CODE, ROLE_SUFFIX
-    FROM SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.ACCESS_PROFILES
+    FROM PRISM_SECURITY.ACCESS_CONTROL.ACCESS_PROFILES
     WHERE IS_ACTIVE = TRUE
     ORDER BY HIERARCHY_ORDER;
   V_AC_CODE STRING;
@@ -492,12 +492,12 @@ BEGIN
                    '' TO DATABASE ROLE '' || :P_DB_NAME || ''.'' || :V_SUFFIX;
     BEGIN
       EXECUTE IMMEDIATE :V_GRANT_SQL;
-      INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''GRANT_SCHEMA_ROLE_TO_DB_ROLE'',
+      INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''GRANT_SCHEMA_ROLE_TO_DB_ROLE'',
         :V_SCHEMA_ROLE_PREFIX || :V_SUFFIX, :V_GRANT_SQL, ''SUCCESS'', '''');
     EXCEPTION WHEN OTHER THEN
       SUCCESS := FALSE;
       V_LINE := SQLCODE || '': '' || SQLERRM;
-      INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''GRANT_SCHEMA_ROLE_TO_DB_ROLE'',
+      INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (:P_ID, CURRENT_TIMESTAMP(), :P_USER, ''GRANT_SCHEMA_ROLE_TO_DB_ROLE'',
         :V_SCHEMA_ROLE_PREFIX || :V_SUFFIX, :V_GRANT_SQL, ''ERROR'', :V_LINE);
     END;
   END FOR;
@@ -517,7 +517,7 @@ AS 'import concurrent.futures
 def run(session, p_id, p_db_name, p_role, p_user):
     q = chr(39)
     profiles = session.sql(
-        "SELECT ROLE_SUFFIX FROM SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.ACCESS_PROFILES "
+        "SELECT ROLE_SUFFIX FROM PRISM_SECURITY.ACCESS_CONTROL.ACCESS_PROFILES "
         "WHERE IS_ACTIVE = TRUE ORDER BY HIERARCHY_ORDER"
     ).collect()
     stmts = []
@@ -531,19 +531,19 @@ def run(session, p_id, p_db_name, p_role, p_user):
     def do_grant(s):
         try:
             session.sql(s).collect()
-            return (SUCCESS, s, "")
+            return ("SUCCESS", s, "")
         except Exception as e:
-            return (ERROR, s, str(e)[:200])
+            return ("ERROR", s, str(e)[:200])
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
         futs = [ex.submit(do_grant, s) for s in stmts]
         for f in concurrent.futures.as_completed(futs):
             st, sql_s, msg = f.result()
-            if st == SUCCESS:
+            if st == "SUCCESS":
                 ok += 1
             try:
                 ss = sql_s.replace(q, q+q)
                 mm = msg.replace(q, q+q)
-                session.sql("INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (" + str(p_id) + ", CURRENT_TIMESTAMP(), " + q + str(p_user) + q + ", " + q + GRANT_USAGE + q + ", " + q + p_db_name + q + ", " + q + ss + q + ", " + q + st + q + ", " + q + mm + q + ")").collect()
+                session.sql("INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (" + str(p_id) + ", CURRENT_TIMESTAMP(), " + q + str(p_user) + q + ", " + q + "GRANT_USAGE" + q + ", " + q + p_db_name + q + ", " + q + ss + q + ", " + q + st + q + ", " + q + mm + q + ")").collect()
             except:
                 pass
     return ok > 0
@@ -562,8 +562,8 @@ def run(session, p_id, p_db_name, p_owner_role, p_obj_types, p_user):
     q = chr(39)
     rows = session.sql(
         "SELECT DISTINCT OBJECT_TYPE, OBJECT_TYPE_PLURAL "
-        "FROM SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SNOWFLAKE_PRIVILEGE_CATALOG "
-        "WHERE PARENT_SCOPE = " + q + SCHEMA + q + " AND SUPPORTS_FUTURE = TRUE "
+        "FROM PRISM_SECURITY.ACCESS_CONTROL.SNOWFLAKE_PRIVILEGE_CATALOG "
+        "WHERE PARENT_SCOPE = " + q + "SCHEMA" + q + " AND SUPPORTS_FUTURE = TRUE "
         "ORDER BY OBJECT_TYPE"
     ).collect()
     stmts = []
@@ -574,19 +574,19 @@ def run(session, p_id, p_db_name, p_owner_role, p_obj_types, p_user):
     def do_grant(s):
         try:
             session.sql(s).collect()
-            return (SUCCESS, s, "")
+            return ("SUCCESS", s, "")
         except Exception as e:
-            return (ERROR, s, str(e)[:200])
+            return ("ERROR", s, str(e)[:200])
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
         futs = [ex.submit(do_grant, s) for s in stmts]
         for f in concurrent.futures.as_completed(futs):
             st, sql_s, msg = f.result()
-            if st == SUCCESS:
+            if st == "SUCCESS":
                 ok += 1
             try:
                 ss = sql_s.replace(q, q+q)
                 mm = msg.replace(q, q+q)
-                session.sql("INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (" + str(p_id) + ", CURRENT_TIMESTAMP(), " + q + str(p_user) + q + ", " + q + GRANT_FUTURE_OWNERSHIP + q + ", " + q + p_db_name + q + ", " + q + ss + q + ", " + q + st + q + ", " + q + mm + q + ")").collect()
+                session.sql("INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (" + str(p_id) + ", CURRENT_TIMESTAMP(), " + q + str(p_user) + q + ", " + q + "GRANT_FUTURE_OWNERSHIP" + q + ", " + q + p_db_name + q + ", " + q + ss + q + ", " + q + st + q + ", " + q + mm + q + ")").collect()
             except:
                 pass
     return ok > 0
@@ -605,12 +605,12 @@ def run(session, p_id, p_db_name, p_owner_role, p_obj_types, p_user):
     q = chr(39)
     schemas = session.sql(
         "SELECT SCHEMA_NAME FROM " + p_db_name + ".INFORMATION_SCHEMA.SCHEMATA "
-        "WHERE SCHEMA_NAME NOT IN (" + q + PUBLIC + q + "," + q + INFORMATION_SCHEMA + q + ")"
+        "WHERE SCHEMA_NAME NOT IN (" + q + "PUBLIC" + q + "," + q + "INFORMATION_SCHEMA" + q + ")"
     ).collect()
     obj_types = session.sql(
         "SELECT DISTINCT OBJECT_TYPE, OBJECT_TYPE_PLURAL "
-        "FROM SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SNOWFLAKE_PRIVILEGE_CATALOG "
-        "WHERE PARENT_SCOPE = " + q + SCHEMA + q + " AND SUPPORTS_ALL = TRUE "
+        "FROM PRISM_SECURITY.ACCESS_CONTROL.SNOWFLAKE_PRIVILEGE_CATALOG "
+        "WHERE PARENT_SCOPE = " + q + "SCHEMA" + q + " AND SUPPORTS_ALL = TRUE "
         "ORDER BY OBJECT_TYPE"
     ).collect()
     stmts = []
@@ -623,19 +623,19 @@ def run(session, p_id, p_db_name, p_owner_role, p_obj_types, p_user):
     def do_grant(stmt):
         try:
             session.sql(stmt).collect()
-            return (SUCCESS, stmt, "")
+            return ("SUCCESS", stmt, "")
         except Exception as e:
-            return (ERROR, stmt, str(e)[:200])
+            return ("ERROR", stmt, str(e)[:200])
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
         futs = [ex.submit(do_grant, s) for s in stmts]
         for f in concurrent.futures.as_completed(futs):
             st, sql_s, msg = f.result()
-            if st == SUCCESS:
+            if st == "SUCCESS":
                 ok += 1
             try:
                 ss = sql_s.replace(q, q+q)
                 mm = msg.replace(q, q+q)
-                session.sql("INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (" + str(p_id) + ", CURRENT_TIMESTAMP(), " + q + str(p_user) + q + ", " + q + GRANT_OBJ_OWNERSHIP + q + ", " + q + p_db_name + q + ", " + q + ss + q + ", " + q + st + q + ", " + q + mm + q + ")").collect()
+                session.sql("INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (" + str(p_id) + ", CURRENT_TIMESTAMP(), " + q + str(p_user) + q + ", " + q + "GRANT_OBJ_OWNERSHIP" + q + ", " + q + p_db_name + q + ", " + q + ss + q + ", " + q + st + q + ", " + q + mm + q + ")").collect()
             except:
                 pass
     return ok > 0
@@ -655,17 +655,24 @@ def run(session, p_id, p_env, p_db_csv, p_clone_db):
     user = session.sql("SELECT CURRENT_USER()").collect()[0][0]
     clone_str = "" if not p_clone_db else " CLONE " + p_clone_db
 
+    app_role = "PRISM_APP_ROLE"
+    try:
+        ar = session.sql("SELECT SETTING_VALUE FROM PRISM_SECURITY.ACCESS_CONTROL.PRISM_SETTINGS WHERE SETTING_KEY = " + q + "APP_ROLE" + q).collect()
+        if ar:
+            app_role = ar[0][0]
+    except: pass
+
     profiles = session.sql(
-        "SELECT ACCESS_CODE, ROLE_SUFFIX FROM SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.ACCESS_PROFILES WHERE IS_ACTIVE = TRUE ORDER BY HIERARCHY_ORDER"
+        "SELECT ACCESS_CODE, ROLE_SUFFIX FROM PRISM_SECURITY.ACCESS_CONTROL.ACCESS_PROFILES WHERE IS_ACTIVE = TRUE ORDER BY HIERARCHY_ORDER"
     ).collect()
 
     env_roles = session.sql(
         "SELECT ROLE_TEMPLATE, OWNS_DATABASES, OWNS_SCHEMAS, OWNS_DB_ROLES "
-        "FROM SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.ENVIRONMENT_ROLE_METADATA WHERE IS_ACTIVE = TRUE"
+        "FROM PRISM_SECURITY.ACCESS_CONTROL.ENVIRONMENT_ROLE_METADATA WHERE IS_ACTIVE = TRUE"
     ).collect()
 
-    db_owner = p_env + _SYSADMIN
-    db_role_owner = p_env + _USERADMIN
+    db_owner = p_env + "_SYSADMIN"
+    db_role_owner = p_env + "_USERADMIN"
     for er in env_roles:
         rn = er[0].replace("<ENV>", p_env)
         if er[1]: db_owner = rn
@@ -673,36 +680,59 @@ def run(session, p_id, p_env, p_db_csv, p_clone_db):
 
     dbs = [d.strip() for d in p_db_csv.split(",") if d.strip()]
     for db_name in dbs:
-        full_db = p_env + _ + db_name
+        full_db = p_env + "_" + db_name
         exists = session.sql("SELECT COUNT(*) FROM INFORMATION_SCHEMA.DATABASES WHERE DATABASE_NAME = " + q + full_db + q).collect()[0][0]
         if exists == 0:
             try:
                 session.sql("CREATE DATABASE " + full_db + clone_str).collect()
-                log(session, p_id, user, CREATE_DATABASE, full_db, "CREATE DATABASE " + full_db + clone_str, SUCCESS, "")
+                log(session, p_id, user, "CREATE_DATABASE", full_db, "CREATE DATABASE " + full_db + clone_str, "SUCCESS", "")
             except Exception as e:
-                log(session, p_id, user, CREATE_DATABASE, full_db, "CREATE DATABASE " + full_db, ERROR, str(e)[:200])
-
-        try:
-            session.sql("GRANT OWNERSHIP ON DATABASE " + full_db + " TO ROLE " + db_owner + " COPY CURRENT GRANTS").collect()
-        except: pass
-        try:
-            session.sql("GRANT OWNERSHIP ON ALL SCHEMAS IN DATABASE " + full_db + " TO ROLE " + db_owner + " COPY CURRENT GRANTS").collect()
-        except: pass
+                log(session, p_id, user, "CREATE_DATABASE", full_db, "CREATE DATABASE " + full_db, "ERROR", str(e)[:200])
 
         for prof in profiles:
-            session.call("SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SP_CREATE_DB_ROLE", p_id, prof[1], full_db, db_role_owner, user)
+            session.call("PRISM_SECURITY.ACCESS_CONTROL.SP_CREATE_DB_ROLE", p_id, prof[1], full_db, db_role_owner, user)
 
         def apply_privs(ac, suf):
-            session.call("SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SP_APPLY_PRIVILEGES", p_id, suf, full_db, ac, user, DATABASE, "")
+            session.call("PRISM_SECURITY.ACCESS_CONTROL.SP_APPLY_PRIVILEGES", p_id, suf, full_db, ac, user, "DATABASE", "")
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
             futs = [ex.submit(apply_privs, p[0], p[1]) for p in profiles]
             concurrent.futures.wait(futs)
 
-        session.call("SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SP_SET_DB_ROLE_OWNERSHIP", p_id, full_db, full_db, p_env, user)
-        session.call("SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SP_GRANT_USAGE_ON_DATABASE_AND_SCHEMAS", p_id, full_db, "", user)
-        session.call("SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SP_GRANT_FUTURE_OBJECT_OWNERSHIP_IN_DATABASE", p_id, full_db, db_role_owner, [], user)
-        session.call("SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SP_GRANT_OBJECT_OWNERSHIP_IN_SCHEMAS", p_id, full_db, db_role_owner, [], user)
+        session.call("PRISM_SECURITY.ACCESS_CONTROL.SP_SET_DB_ROLE_OWNERSHIP", p_id, full_db, full_db, p_env, user)
+        session.call("PRISM_SECURITY.ACCESS_CONTROL.SP_GRANT_USAGE_ON_DATABASE_AND_SCHEMAS", p_id, full_db, "", user)
+        try:
+            obj_types = session.sql("SELECT DISTINCT OBJECT_TYPE_PLURAL FROM PRISM_SECURITY.ACCESS_CONTROL.SNOWFLAKE_PRIVILEGE_CATALOG WHERE PARENT_SCOPE = " + q + "SCHEMA" + q + " AND SUPPORTS_FUTURE = TRUE").collect()
+            for ot in obj_types:
+                try:
+                    session.sql("GRANT OWNERSHIP ON FUTURE " + ot[0] + " IN DATABASE " + full_db + " TO ROLE " + db_role_owner + " COPY CURRENT GRANTS").collect()
+                except: pass
+        except: pass
+
+        try:
+            session.sql("GRANT OWNERSHIP ON DATABASE " + full_db + " TO ROLE " + db_owner + " COPY CURRENT GRANTS").collect()
+        except: pass
+        try:
+            session.sql("GRANT USAGE ON DATABASE " + full_db + " TO ROLE " + app_role).collect()
+            session.sql("GRANT CREATE SCHEMA ON DATABASE " + full_db + " TO ROLE " + app_role).collect()
+            session.sql("GRANT MONITOR ON DATABASE " + full_db + " TO ROLE " + app_role).collect()
+        except: pass
+        try:
+            session.sql("GRANT OWNERSHIP ON ALL SCHEMAS IN DATABASE " + full_db + " TO ROLE " + db_owner + " COPY CURRENT GRANTS").collect()
+        except: pass
+        try:
+            session.sql("GRANT USAGE ON ALL SCHEMAS IN DATABASE " + full_db + " TO ROLE " + app_role).collect()
+        except: pass
+
+        try:
+            schemas_list = session.sql("SELECT SCHEMA_NAME FROM " + full_db + ".INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME NOT IN (" + q + "PUBLIC" + q + "," + q + "INFORMATION_SCHEMA" + q + ")").collect()
+            obj_types2 = session.sql("SELECT DISTINCT OBJECT_TYPE, OBJECT_TYPE_PLURAL FROM PRISM_SECURITY.ACCESS_CONTROL.SNOWFLAKE_PRIVILEGE_CATALOG WHERE PARENT_SCOPE = " + q + "SCHEMA" + q + " AND SUPPORTS_ALL = TRUE").collect()
+            for s in schemas_list:
+                for o in obj_types2:
+                    try:
+                        session.sql("GRANT OWNERSHIP ON ALL " + o[1] + " IN SCHEMA " + full_db + "." + s[0] + " TO ROLE " + db_role_owner + " COPY CURRENT GRANTS").collect()
+                    except: pass
+        except: pass
 
     return "Database permissions managed successfully"
 
@@ -711,7 +741,7 @@ def log(session, p_id, user, event_type, obj, sql_cmd, status, msg):
     try:
         s = sql_cmd.replace(q, q+q)[:500]
         m = msg.replace(q, q+q)[:200]
-        session.sql("INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (" + str(p_id) + ", CURRENT_TIMESTAMP(), " + q + user + q + ", " + q + event_type + q + ", " + q + obj + q + ", " + q + s + q + ", " + q + status + q + ", " + q + m + q + ")").collect()
+        session.sql("INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (" + str(p_id) + ", CURRENT_TIMESTAMP(), " + q + user + q + ", " + q + event_type + q + ", " + q + obj + q + ", " + q + s + q + ", " + q + status + q + ", " + q + m + q + ")").collect()
     except: pass
 ';
 
@@ -726,29 +756,36 @@ EXECUTE AS OWNER
 AS 'import concurrent.futures
 def run(session, p_id, p_env, p_db_name, p_schema_csv):
     q = chr(39)
-    full_db = p_env + _ + p_db_name
+    full_db = p_env + "_" + p_db_name
     user = session.sql("SELECT CURRENT_USER()").collect()[0][0]
+
+    app_role = "PRISM_APP_ROLE"
+    try:
+        ar = session.sql("SELECT SETTING_VALUE FROM PRISM_SECURITY.ACCESS_CONTROL.PRISM_SETTINGS WHERE SETTING_KEY = " + q + "APP_ROLE" + q).collect()
+        if ar:
+            app_role = ar[0][0]
+    except: pass
 
     db_exists = session.sql("SELECT COUNT(*) FROM INFORMATION_SCHEMA.DATABASES WHERE DATABASE_NAME = " + q + full_db + q).collect()[0][0]
     if db_exists == 0:
         return "Database " + full_db + " does not exist"
 
     profiles = session.sql(
-        "SELECT ACCESS_CODE, ROLE_SUFFIX FROM SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.ACCESS_PROFILES WHERE IS_ACTIVE = TRUE ORDER BY HIERARCHY_ORDER"
+        "SELECT ACCESS_CODE, ROLE_SUFFIX FROM PRISM_SECURITY.ACCESS_CONTROL.ACCESS_PROFILES WHERE IS_ACTIVE = TRUE ORDER BY HIERARCHY_ORDER"
     ).collect()
 
     env_roles = session.sql(
-        "SELECT ROLE_TEMPLATE, OWNS_SCHEMAS, OWNS_DB_ROLES FROM SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.ENVIRONMENT_ROLE_METADATA WHERE IS_ACTIVE = TRUE"
+        "SELECT ROLE_TEMPLATE, OWNS_SCHEMAS, OWNS_DB_ROLES FROM PRISM_SECURITY.ACCESS_CONTROL.ENVIRONMENT_ROLE_METADATA WHERE IS_ACTIVE = TRUE"
     ).collect()
-    schema_owner = p_env + _SYSADMIN
-    db_role_owner = p_env + _USERADMIN
+    schema_owner = p_env + "_SYSADMIN"
+    db_role_owner = p_env + "_USERADMIN"
     for er in env_roles:
         rn = er[0].replace("<ENV>", p_env)
         if er[1]: schema_owner = rn
         if er[2]: db_role_owner = rn
 
     obj_types = session.sql(
-        "SELECT DISTINCT OBJECT_TYPE_PLURAL FROM SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SNOWFLAKE_PRIVILEGE_CATALOG WHERE PARENT_SCOPE = " + q + SCHEMA + q + " AND SUPPORTS_FUTURE = TRUE ORDER BY 1"
+        "SELECT DISTINCT OBJECT_TYPE_PLURAL FROM PRISM_SECURITY.ACCESS_CONTROL.SNOWFLAKE_PRIVILEGE_CATALOG WHERE PARENT_SCOPE = " + q + "SCHEMA" + q + " AND SUPPORTS_FUTURE = TRUE ORDER BY 1"
     ).collect()
 
     schemas = [s.strip() for s in p_schema_csv.split(",") if s.strip()]
@@ -756,12 +793,35 @@ def run(session, p_id, p_env, p_db_name, p_schema_csv):
         fsp = full_db + "." + schema_name
         try:
             session.sql("CREATE SCHEMA IF NOT EXISTS " + fsp).collect()
-            log(session, p_id, user, CREATE_SCHEMA, fsp, "CREATE SCHEMA IF NOT EXISTS " + fsp, SUCCESS, "")
+            log(session, p_id, user, "CREATE_SCHEMA", fsp, "CREATE SCHEMA IF NOT EXISTS " + fsp, "SUCCESS", "")
         except Exception as e:
-            log(session, p_id, user, CREATE_SCHEMA, fsp, "CREATE SCHEMA", ERROR, str(e)[:200])
+            log(session, p_id, user, "CREATE_SCHEMA", fsp, "CREATE SCHEMA", "ERROR", str(e)[:200])
+
+        for prof in profiles:
+            srn = schema_name + "_" + prof[1]
+            try:
+                session.sql("CREATE DATABASE ROLE IF NOT EXISTS " + full_db + "." + srn).collect()
+            except: pass
+
+        def apply_profile(ac_code, suffix, sname):
+            srn = sname + "_" + suffix
+            session.call("PRISM_SECURITY.ACCESS_CONTROL.SP_APPLY_PRIVILEGES", p_id, srn, full_db, ac_code, user, "SCHEMA", sname)
+            try:
+                session.sql("GRANT OWNERSHIP ON DATABASE ROLE " + full_db + "." + srn + " TO ROLE " + db_role_owner + " COPY CURRENT GRANTS").collect()
+            except: pass
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+            futs = [ex.submit(apply_profile, p[0], p[1], schema_name) for p in profiles]
+            concurrent.futures.wait(futs)
+
+        session.call("PRISM_SECURITY.ACCESS_CONTROL.SP_SET_SCHEMA_ROLE_HIERARCHY", p_id, full_db, schema_name, p_env, user)
+        session.call("PRISM_SECURITY.ACCESS_CONTROL.SP_GRANT_SCHEMA_ROLES_TO_DB_ROLES", p_id, full_db, schema_name, user)
 
         try:
             session.sql("GRANT OWNERSHIP ON SCHEMA " + fsp + " TO ROLE " + schema_owner + " COPY CURRENT GRANTS").collect()
+        except: pass
+        try:
+            session.sql("GRANT USAGE ON SCHEMA " + fsp + " TO ROLE " + app_role).collect()
         except: pass
 
         def set_future_own(otp):
@@ -773,27 +833,15 @@ def run(session, p_id, p_env, p_db_name, p_schema_csv):
             futs = [ex.submit(set_future_own, ot[0]) for ot in obj_types]
             concurrent.futures.wait(futs)
 
-        for prof in profiles:
-            srn = schema_name + _ + prof[1]
-            try:
-                session.sql("CREATE DATABASE ROLE IF NOT EXISTS " + full_db + "." + srn).collect()
-            except: pass
-
-        def apply_profile(ac_code, suffix, sname):
-            srn = sname + _ + suffix
-            session.call("SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SP_APPLY_PRIVILEGES", p_id, srn, full_db, ac_code, user, SCHEMA, sname)
-            try:
-                session.sql("GRANT OWNERSHIP ON DATABASE ROLE " + full_db + "." + srn + " TO ROLE " + db_role_owner + " COPY CURRENT GRANTS").collect()
-            except: pass
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
-            futs = [ex.submit(apply_profile, p[0], p[1], schema_name) for p in profiles]
-            concurrent.futures.wait(futs)
-
-        session.call("SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SP_SET_SCHEMA_ROLE_HIERARCHY", p_id, full_db, schema_name, p_env, user)
-        session.call("SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SP_GRANT_SCHEMA_ROLES_TO_DB_ROLES", p_id, full_db, schema_name, user)
-
-    session.call("SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SP_GRANT_OBJECT_OWNERSHIP_IN_SCHEMAS", p_id, full_db, db_role_owner, [], user)
+    try:
+        schemas_list = session.sql("SELECT SCHEMA_NAME FROM " + full_db + ".INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME NOT IN (" + q + "PUBLIC" + q + "," + q + "INFORMATION_SCHEMA" + q + ")").collect()
+        obj_types2 = session.sql("SELECT DISTINCT OBJECT_TYPE, OBJECT_TYPE_PLURAL FROM PRISM_SECURITY.ACCESS_CONTROL.SNOWFLAKE_PRIVILEGE_CATALOG WHERE PARENT_SCOPE = " + q + "SCHEMA" + q + " AND SUPPORTS_ALL = TRUE").collect()
+        for s in schemas_list:
+            for o in obj_types2:
+                try:
+                    session.sql("GRANT OWNERSHIP ON ALL " + o[1] + " IN SCHEMA " + full_db + "." + s[0] + " TO ROLE " + db_role_owner + " COPY CURRENT GRANTS").collect()
+                except: pass
+    except: pass
     return "Schema permissions managed successfully"
 
 def log(session, p_id, user, event_type, obj, sql_cmd, status, msg):
@@ -801,7 +849,7 @@ def log(session, p_id, user, event_type, obj, sql_cmd, status, msg):
     try:
         s = sql_cmd.replace(q, q+q)[:500]
         m = msg.replace(q, q+q)[:200]
-        session.sql("INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (" + str(p_id) + ", CURRENT_TIMESTAMP(), " + q + user + q + ", " + q + event_type + q + ", " + q + obj + q + ", " + q + s + q + ", " + q + status + q + ", " + q + m + q + ")").collect()
+        session.sql("INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (" + str(p_id) + ", CURRENT_TIMESTAMP(), " + q + user + q + ", " + q + event_type + q + ", " + q + obj + q + ", " + q + s + q + ", " + q + status + q + ", " + q + m + q + ")").collect()
     except: pass
 ';
 
@@ -826,10 +874,10 @@ DECLARE
     RES RESULTSET;
 
 BEGIN
-    SELECT OPERATIONS_UNDER_DEVELOPMENT.LOGS.seq_audit_log.NEXTVAL INTO :V_AUDIT_EVENT_ID;
+    SELECT PRISM_OPERATIONS.LOGS.seq_audit_log.NEXTVAL INTO :V_AUDIT_EVENT_ID;
 
-    -- Log initiation of this controller action in OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG
-    INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG (EVENT_ID, EVENT_TIME, INVOKED_BY, EVENT_TYPE, OBJECT_NAME, SQL_COMMAND, STATUS, MESSAGE)
+    -- Log initiation of this controller action in PRISM_OPERATIONS.LOGS.AUDIT_LOG
+    INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG (AUDIT_ID, EXECUTED_AT, INVOKED_BY, EVENT_TYPE, TARGET_OBJECT, SQL_COMMAND, STATUS, MESSAGE)
     VALUES (:V_AUDIT_EVENT_ID, CURRENT_TIMESTAMP(), :V_INVOKED_BY, ''CONTROLLER_INIT_MAP_FT_ROLE'', :P_FUNCTION_NAME,
             ''Params: ENV='' || :P_ENV_NAME || '', FUNC_PREFIX='' || :P_FUNCTION_NAME_PREFIX || '', FUNC='' || :P_FUNCTION_NAME || '', TYPE='' || :P_ROLE_TYPE || '', DBNAME='' || :P_TARGET_DB_NAME_NO_PREFIX || '', DBROLE_SUFFIX='' || :P_DB_ROLE_SUFFIX_TO_MAP,
             ''INFO'', ''Controller SP_MANAGE_FUNCTIONAL_TECHNICAL_ROLES_CONTROLLER started.'');
@@ -838,7 +886,7 @@ BEGIN
     IF ((SELECT COUNT(*) FROM ENVIRONMENTS WHERE ENVIRONMENT_NAME = :P_ENV_NAME) = 0) THEN
         V_OPERATION_STATUS := ''ERROR'';
         V_DETAIL_MESSAGE := ''Invalid environment specified: '' || :P_ENV_NAME;
-        INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG (EVENT_ID, EVENT_TIME, INVOKED_BY, EVENT_TYPE, OBJECT_NAME, SQL_COMMAND, STATUS, MESSAGE)
+        INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG (AUDIT_ID, EXECUTED_AT, INVOKED_BY, EVENT_TYPE, TARGET_OBJECT, SQL_COMMAND, STATUS, MESSAGE)
         VALUES (:V_AUDIT_EVENT_ID, CURRENT_TIMESTAMP(), :V_INVOKED_BY, ''CONTROLLER_ERROR_MAP_FT_ROLE'', :P_FUNCTION_NAME, ''Environment Validation'', ''ERROR'', V_DETAIL_MESSAGE);
         RES := (SELECT :V_OPERATION_STATUS AS OPERATION_STATUS, :V_DETAIL_MESSAGE AS DETAIL_MESSAGE, :V_AUDIT_EVENT_ID AS LOG_REFERENCE_ID);
         RETURN TABLE(RES);
@@ -878,8 +926,8 @@ BEGIN
     END IF;
     V_DETAIL_MESSAGE := V_SP_CALL_RESULT;
 
-    -- Log completion in OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG
-    INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG (EVENT_ID, EVENT_TIME, INVOKED_BY, EVENT_TYPE, OBJECT_NAME, SQL_COMMAND, STATUS, MESSAGE)
+    -- Log completion in PRISM_OPERATIONS.LOGS.AUDIT_LOG
+    INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG (AUDIT_ID, EXECUTED_AT, INVOKED_BY, EVENT_TYPE, TARGET_OBJECT, SQL_COMMAND, STATUS, MESSAGE)
     VALUES (:V_AUDIT_EVENT_ID, CURRENT_TIMESTAMP(), :V_INVOKED_BY, ''CONTROLLER_END_MAP_FT_ROLE'', :P_FUNCTION_NAME_PREFIX||:P_FUNCTION_NAME,
             ''Called SP_CREATE_MAPPED_ROLE'', :V_OPERATION_STATUS, :V_DETAIL_MESSAGE);
 
@@ -893,9 +941,9 @@ EXCEPTION
         V_DETAIL_MESSAGE := ''Critical error in SP_MANAGE_FUNCTIONAL_TECHNICAL_ROLES_CONTROLLER: '' || :V_LINE;
        
         -- Ensure AUDIT_EVENT_ID is available, if error happened before its assignment, it might be null.
-        -- For robustness, one might initialize V_AUDIT_EVENT_ID to a default or handle null if it can occur before SELECT OPERATIONS_UNDER_DEVELOPMENT.LOGS.seq_audit_log.NEXTVAL.
+        -- For robustness, one might initialize V_AUDIT_EVENT_ID to a default or handle null if it can occur before SELECT PRISM_OPERATIONS.LOGS.seq_audit_log.NEXTVAL.
         -- However, in this structure, its assigned early.
-        INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG (EVENT_ID, EVENT_TIME, INVOKED_BY, EVENT_TYPE, OBJECT_NAME, SQL_COMMAND, STATUS, MESSAGE)
+        INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG (AUDIT_ID, EXECUTED_AT, INVOKED_BY, EVENT_TYPE, TARGET_OBJECT, SQL_COMMAND, STATUS, MESSAGE)
         VALUES (COALESCE(:V_AUDIT_EVENT_ID, -1), CURRENT_TIMESTAMP(), :V_INVOKED_BY, ''CONTROLLER_CRITICAL_ERROR'', :P_FUNCTION_NAME_PREFIX||:P_FUNCTION_NAME,
                 ''Controller execution failed'', ''ERROR'', :V_DETAIL_MESSAGE);
        
@@ -919,27 +967,30 @@ DECLARE
     V_LOG_STATUS STRING DEFAULT ''SUCCESS'';
     V_LOG_MESSAGE STRING DEFAULT ''Role created and mapped successfully.'';
     V_LINE STRING;                  -- For capturing SQLCODE and SQLERRM
-    SUCCESS BOOLEAN DEFAULT TRUE;   -- Internal success tracking for multi-step OPERATIONS_UNDER_DEVELOPMENT
+    SUCCESS BOOLEAN DEFAULT TRUE;   -- Internal success tracking for multi-step PRISM_OPERATIONS
 BEGIN
     -- Validate P_ROLE_TYPE parameter
     IF (:P_ROLE_TYPE NOT IN (''Functional'', ''Technical'')) THEN
         V_LOG_STATUS := ''ERROR'';
         V_LOG_MESSAGE := ''Invalid P_ROLE_TYPE: "'' || :P_ROLE_TYPE || ''". Must be ''''Functional'''' or ''''Technical''''.'';
-        INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.ROLE_HIERARCHY_LOG (AUDIT_EVENT_ID, INVOKED_BY, ENVIRONMENT_NAME, CREATED_ROLE_NAME, CREATED_ROLE_TYPE, MAPPED_DATABASE_ROLE, PARENT_ACCOUNT_ROLE, SQL_COMMAND_CREATE_ROLE, SQL_COMMAND_GRANT_DB_ROLE, STATUS, MESSAGE)
+        INSERT INTO PRISM_OPERATIONS.LOGS.ROLE_HIERARCHY_LOG (AUDIT_EVENT_ID, INVOKED_BY, ENVIRONMENT_NAME, CREATED_ROLE_NAME, CREATED_ROLE_TYPE, MAPPED_DATABASE_ROLE, PARENT_ACCOUNT_ROLE, SQL_COMMAND_CREATE_ROLE, SQL_COMMAND_GRANT_DB_ROLE, STATUS, MESSAGE)
         VALUES (:P_AUDIT_EVENT_ID, :P_INVOKED_BY, :P_ENV_NAME, NULL, :P_ROLE_TYPE, :P_DATABASE_ROLE_TO_MAP, :P_OWNER_ACCOUNT_ROLE, NULL, NULL, :V_LOG_STATUS, :V_LOG_MESSAGE);
         RETURN ''ERROR: '' || :V_LOG_MESSAGE;
     END IF;
 
     -- Fetch role naming metadata from FUNCTIONAL_TECHNICAL_ROLE_METADATA
-    SELECT PREFIX_PATTERN, SUFFIX
+    SELECT
+        REGEXP_REPLACE(ROLE_NAME_PATTERN, ''[^_]+$'', '''') AS prefix_part,
+        ''_'' || REGEXP_SUBSTR(ROLE_NAME_PATTERN, ''[^_]+$'') AS suffix_part
     INTO :V_PREFIX_PATTERN, :V_SUFFIX
     FROM FUNCTIONAL_TECHNICAL_ROLE_METADATA
-    WHERE FUNCTION_NAME = :P_FUNCTION_NAME AND ROLE_TYPE = :P_ROLE_TYPE;
+    WHERE ROLE_TYPE = :P_ROLE_TYPE
+    LIMIT 1;
 
     IF (:V_PREFIX_PATTERN IS NULL OR :V_SUFFIX IS NULL) THEN
         V_LOG_STATUS := ''ERROR'';
         V_LOG_MESSAGE := ''Metadata not found in FUNCTIONAL_TECHNICAL_ROLE_METADATA for FUNCTION_NAME='' || :P_FUNCTION_NAME || '' and ROLE_TYPE='' || :P_ROLE_TYPE || ''.'';
-        INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.ROLE_HIERARCHY_LOG (AUDIT_EVENT_ID, INVOKED_BY, ENVIRONMENT_NAME, CREATED_ROLE_NAME, CREATED_ROLE_TYPE, MAPPED_DATABASE_ROLE, PARENT_ACCOUNT_ROLE, SQL_COMMAND_CREATE_ROLE, SQL_COMMAND_GRANT_DB_ROLE, STATUS, MESSAGE)
+        INSERT INTO PRISM_OPERATIONS.LOGS.ROLE_HIERARCHY_LOG (AUDIT_EVENT_ID, INVOKED_BY, ENVIRONMENT_NAME, CREATED_ROLE_NAME, CREATED_ROLE_TYPE, MAPPED_DATABASE_ROLE, PARENT_ACCOUNT_ROLE, SQL_COMMAND_CREATE_ROLE, SQL_COMMAND_GRANT_DB_ROLE, STATUS, MESSAGE)
         VALUES (:P_AUDIT_EVENT_ID, :P_INVOKED_BY, :P_ENV_NAME, NULL, :P_ROLE_TYPE, :P_DATABASE_ROLE_TO_MAP, :P_OWNER_ACCOUNT_ROLE, NULL, NULL, :V_LOG_STATUS, :V_LOG_MESSAGE);
         RETURN ''ERROR: '' || :V_LOG_MESSAGE;
     END IF;
@@ -954,26 +1005,26 @@ END IF;
     V_SQL_CREATE_ROLE := ''CREATE ROLE IF NOT EXISTS "'' || :V_CONSTRUCTED_ROLE_NAME || ''"''; -- For logging
 
     -- Step 1: Create the account-level functional/technical role and set its ownership
-    -- This uses your existing helper SP_CREATE_ROLE_AND_SET_OWNERSHIP, which also logs to OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG
+    -- This uses your existing helper SP_CREATE_ROLE_AND_SET_OWNERSHIP, which also logs to PRISM_OPERATIONS.LOGS.AUDIT_LOG
     BEGIN
         CALL SP_CREATE_ROLE_AND_SET_OWNERSHIP(:P_AUDIT_EVENT_ID, :V_CONSTRUCTED_ROLE_NAME, :P_OWNER_ACCOUNT_ROLE, :P_INVOKED_BY);
         -- SP_CREATE_ROLE_AND_SET_OWNERSHIP returns BOOLEAN, but we handle errors via EXCEPTION here for overall status.
-        -- It also inserts into OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG.
+        -- It also inserts into PRISM_OPERATIONS.LOGS.AUDIT_LOG.
     EXCEPTION
         WHEN OTHER THEN
             SUCCESS := FALSE;
             V_LINE := SQLCODE || '': '' || SQLERRM;
             V_LOG_STATUS := ''ERROR'';
             V_LOG_MESSAGE := ''Failed during SP_CREATE_ROLE_AND_SET_OWNERSHIP for role '' || :V_CONSTRUCTED_ROLE_NAME || ''. Owner: '' || :P_OWNER_ACCOUNT_ROLE || ''. Details: '' || :V_LINE;
-            -- OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG entry for this specific failure might be duplicated if SP_CREATE_ROLE_AND_SET_OWNERSHIP also logs its own failure.
+            -- PRISM_OPERATIONS.LOGS.AUDIT_LOG entry for this specific failure might be duplicated if SP_CREATE_ROLE_AND_SET_OWNERSHIP also logs its own failure.
             -- However, this ensures a log if the CALL itself fails before the SP''s internal logging.
-            INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (:P_AUDIT_EVENT_ID, CURRENT_TIMESTAMP(), :P_INVOKED_BY, ''CALL_SP_CREATE_ROLE_OWNERSHIP_FAIL'', :V_CONSTRUCTED_ROLE_NAME,
+            INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (:P_AUDIT_EVENT_ID, CURRENT_TIMESTAMP(), :P_INVOKED_BY, ''CALL_SP_CREATE_ROLE_OWNERSHIP_FAIL'', :V_CONSTRUCTED_ROLE_NAME,
                 ''CALL SP_CREATE_ROLE_AND_SET_OWNERSHIP('' || :P_AUDIT_EVENT_ID || '', '' || :V_CONSTRUCTED_ROLE_NAME || '', '' || :P_OWNER_ACCOUNT_ROLE || '', '' || :P_INVOKED_BY || '')'', ''ERROR'', :V_LINE);
     END;
 
     IF (NOT SUCCESS) THEN
-        -- Log failure to OPERATIONS_UNDER_DEVELOPMENT.LOGS.ROLE_HIERARCHY_LOG and return
-        INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.ROLE_HIERARCHY_LOG (AUDIT_EVENT_ID, INVOKED_BY, ENVIRONMENT_NAME, CREATED_ROLE_NAME, CREATED_ROLE_TYPE, MAPPED_DATABASE_ROLE, PARENT_ACCOUNT_ROLE, SQL_COMMAND_CREATE_ROLE, SQL_COMMAND_GRANT_DB_ROLE, STATUS, MESSAGE)
+        -- Log failure to PRISM_OPERATIONS.LOGS.ROLE_HIERARCHY_LOG and return
+        INSERT INTO PRISM_OPERATIONS.LOGS.ROLE_HIERARCHY_LOG (AUDIT_EVENT_ID, INVOKED_BY, ENVIRONMENT_NAME, CREATED_ROLE_NAME, CREATED_ROLE_TYPE, MAPPED_DATABASE_ROLE, PARENT_ACCOUNT_ROLE, SQL_COMMAND_CREATE_ROLE, SQL_COMMAND_GRANT_DB_ROLE, STATUS, MESSAGE)
         VALUES (:P_AUDIT_EVENT_ID, :P_INVOKED_BY, :P_ENV_NAME, :V_CONSTRUCTED_ROLE_NAME, :P_ROLE_TYPE, :P_DATABASE_ROLE_TO_MAP, :P_OWNER_ACCOUNT_ROLE, :V_SQL_CREATE_ROLE, NULL, :V_LOG_STATUS, :V_LOG_MESSAGE);
         RETURN ''ERROR: '' || :V_LOG_MESSAGE;
     END IF;
@@ -983,7 +1034,7 @@ END IF;
 
     BEGIN
         EXECUTE IMMEDIATE :V_SQL_GRANT_DB_ROLE;
-        INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (:P_AUDIT_EVENT_ID, CURRENT_TIMESTAMP(), :P_INVOKED_BY, ''GRANT_DB_ROLE_TO_MAPPED_ROLE'', :V_CONSTRUCTED_ROLE_NAME,
+        INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (:P_AUDIT_EVENT_ID, CURRENT_TIMESTAMP(), :P_INVOKED_BY, ''GRANT_DB_ROLE_TO_MAPPED_ROLE'', :V_CONSTRUCTED_ROLE_NAME,
             :V_SQL_GRANT_DB_ROLE, ''SUCCESS'', ''Granted database role '' || :P_DATABASE_ROLE_TO_MAP || '' to account role '' || :V_CONSTRUCTED_ROLE_NAME);
     EXCEPTION
         WHEN OTHER THEN
@@ -991,7 +1042,7 @@ END IF;
             V_LINE := SQLCODE || '': '' || SQLERRM;
             V_LOG_STATUS := ''ERROR'';
             V_LOG_MESSAGE := ''Failed to grant database role '' || :P_DATABASE_ROLE_TO_MAP || '' to '' || :V_CONSTRUCTED_ROLE_NAME || ''. Details: '' || :V_LINE;
-            INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (:P_AUDIT_EVENT_ID, CURRENT_TIMESTAMP(), :P_INVOKED_BY, ''GRANT_DB_ROLE_TO_MAPPED_ROLE_FAIL'', :V_CONSTRUCTED_ROLE_NAME,
+            INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (:P_AUDIT_EVENT_ID, CURRENT_TIMESTAMP(), :P_INVOKED_BY, ''GRANT_DB_ROLE_TO_MAPPED_ROLE_FAIL'', :V_CONSTRUCTED_ROLE_NAME,
                 :V_SQL_GRANT_DB_ROLE, ''ERROR'', :V_LINE);
     END;
 
@@ -1002,7 +1053,7 @@ END IF;
 
     BEGIN
         EXECUTE IMMEDIATE :V_SQL_GRANT_DB_ROLE;
-        INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (:P_AUDIT_EVENT_ID, CURRENT_TIMESTAMP(), :P_INVOKED_BY, ''GRANT_CORTEX_ROLE_TO_MAPPED_ROLE'', :V_CONSTRUCTED_ROLE_NAME,
+        INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (:P_AUDIT_EVENT_ID, CURRENT_TIMESTAMP(), :P_INVOKED_BY, ''GRANT_CORTEX_ROLE_TO_MAPPED_ROLE'', :V_CONSTRUCTED_ROLE_NAME,
             :V_SQL_GRANT_DB_ROLE, ''SUCCESS'', ''Granted database role SNOWFLAKE.CORTEX_USER to account role '' || :V_CONSTRUCTED_ROLE_NAME);
     EXCEPTION
         WHEN OTHER THEN
@@ -1010,12 +1061,12 @@ END IF;
             V_LINE := SQLCODE || '': '' || SQLERRM;
             V_LOG_STATUS := ''ERROR'';
             V_LOG_MESSAGE := ''Failed to grant database role SNOWFLAKE.CORTEX_USER to '' || :V_CONSTRUCTED_ROLE_NAME || ''. Details: '' || :V_LINE;
-            INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (:P_AUDIT_EVENT_ID, CURRENT_TIMESTAMP(), :P_INVOKED_BY, ''GRANT_CORTEX_ROLE_TO_MAPPED_ROLE_FAIL'', :V_CONSTRUCTED_ROLE_NAME,
+            INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (:P_AUDIT_EVENT_ID, CURRENT_TIMESTAMP(), :P_INVOKED_BY, ''GRANT_CORTEX_ROLE_TO_MAPPED_ROLE_FAIL'', :V_CONSTRUCTED_ROLE_NAME,
                 :V_SQL_GRANT_DB_ROLE, ''ERROR'', :V_LINE);
     END;
     END IF;
-    -- Log the overall operation outcome to OPERATIONS_UNDER_DEVELOPMENT.LOGS.ROLE_HIERARCHY_LOG
-    INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.ROLE_HIERARCHY_LOG (
+    -- Log the overall operation outcome to PRISM_OPERATIONS.LOGS.ROLE_HIERARCHY_LOG
+    INSERT INTO PRISM_OPERATIONS.LOGS.ROLE_HIERARCHY_LOG (
         AUDIT_EVENT_ID, INVOKED_BY, ENVIRONMENT_NAME,
         CREATED_ROLE_NAME, CREATED_ROLE_TYPE, MAPPED_DATABASE_ROLE, PARENT_ACCOUNT_ROLE,
         SQL_COMMAND_CREATE_ROLE, SQL_COMMAND_GRANT_DB_ROLE,
@@ -1049,16 +1100,22 @@ from datetime import datetime
 
 def run(session, p_source_db, p_target_db, p_target_env, p_clone_mode, p_timestamp, p_offset_seconds, p_statement_id, p_ignore_insufficient_retention, p_ignore_hybrid_tables, p_include_internal_stages, p_setup_rbac, p_reattach_roles):
     q = chr(39)
-    result = {status: SUCCESS, steps: [], warnings: [], role_mappings_captured: 0, role_mappings_restored: 0}
+    result = {"status": "SUCCESS", "steps": [], "warnings": [], "role_mappings_captured": 0, "role_mappings_restored": 0}
+    app_role = "PRISM_APP_ROLE"
+    try:
+        ar = session.sql("SELECT SETTING_VALUE FROM PRISM_SECURITY.ACCESS_CONTROL.PRISM_SETTINGS WHERE SETTING_KEY = " + q + "APP_ROLE" + q).collect()
+        if ar:
+            app_role = ar[0][0]
+    except: pass
     import re
     id_pattern = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-    for param_name, param_val in [(source, p_source_db), (target, p_target_db), (env, p_target_env)]:
+    for param_name, param_val in [("source", p_source_db), ("target", p_target_db), ("env", p_target_env)]:
         if not id_pattern.match(str(param_val)):
-            result[status] = FAILED
-            result[warnings].append("Invalid identifier: " + param_name + " = " + str(param_val))
+            result["status"] = "FAILED"
+            result["warnings"].append("Invalid identifier: " + param_name + " = " + str(param_val))
             return result
     user = session.sql("SELECT CURRENT_USER()").collect()[0][0]
-    audit_id = session.sql("SELECT OPERATIONS_UNDER_DEVELOPMENT.LOGS.SEQ_AUDIT_LOG.NEXTVAL").collect()[0][0]
+    audit_id = session.sql("SELECT PRISM_OPERATIONS.LOGS.SEQ_AUDIT_LOG.NEXTVAL").collect()[0][0]
 
     # ============================================================
     # STEP 1: Capture account role -> database role mappings BEFORE clone
@@ -1067,21 +1124,21 @@ def run(session, p_source_db, p_target_db, p_target_env, p_clone_mode, p_timesta
     if p_reattach_roles:
         try:
             mappings = session.sql(
-                "SELECT ROLE AS DB_ROLE, GRANTEE_NAME AS ACCOUNT_ROLE "
+                "SELECT NAME AS DB_ROLE, GRANTEE_NAME AS ACCOUNT_ROLE "
                 "FROM SNOWFLAKE.ACCOUNT_USAGE.GRANTS_TO_ROLES "
-                "WHERE GRANTED_ON = " + q + DATABASE_ROLE + q + " "
-                "AND PRIVILEGE = " + q + USAGE + q + " "
-                "AND GRANTED_TO = " + q + ROLE + q + " "
+                "WHERE GRANTED_ON = " + q + "DATABASE_ROLE" + q + " "
+                "AND PRIVILEGE = " + q + "USAGE" + q + " "
+                "AND GRANTED_TO = " + q + "ROLE" + q + " "
                 "AND TABLE_CATALOG = " + q + p_source_db + q + " "
                 "AND DELETED_ON IS NULL"
             ).collect()
             for m in mappings:
-                role_mappings.append({db_role: m[0], account_role: m[1]})
-            result[role_mappings_captured] = len(role_mappings)
-            result[steps].append({step: CAPTURE_ROLE_MAPPINGS, status: SUCCESS, detail: str(len(role_mappings)) + " account role -> database role mappings captured"})
-            log(session, audit_id, user, CLONE_CAPTURE_ROLES, p_source_db, "Captured " + str(len(role_mappings)) + " role mappings", SUCCESS, "")
+                role_mappings.append({"db_role": m[0], "account_role": m[1]})
+            result["role_mappings_captured"] = len(role_mappings)
+            result["steps"].append({"step": "CAPTURE_ROLE_MAPPINGS", "status": "SUCCESS", "detail": str(len(role_mappings)) + " account role -> database role mappings captured"})
+            log(session, audit_id, user, "CLONE_CAPTURE_ROLES", p_source_db, "Captured " + str(len(role_mappings)) + " role mappings", "SUCCESS", "")
         except Exception as e:
-            result[warnings].append("Could not capture role mappings from ACCOUNT_USAGE (may have latency): " + str(e)[:200])
+            result["warnings"].append("Could not capture role mappings from ACCOUNT_USAGE (may have latency): " + str(e)[:200])
             try:
                 live_mappings = session.sql("SHOW GRANTS OF DATABASE ROLE " + p_source_db + ".RO_AR").collect()
             except:
@@ -1096,22 +1153,22 @@ def run(session, p_source_db, p_target_db, p_target_env, p_clone_mode, p_timesta
                 priv = g[1]
                 granted_to = g[4]
                 grantee = g[5]
-                if priv != OWNERSHIP and granted_to == ROLE:
-                    db_grants.append({privilege: priv, grantee: grantee})
-            result[steps].append({step: CAPTURE_DB_GRANTS, status: SUCCESS, detail: str(len(db_grants)) + " database-level grants captured"})
+                if priv != "OWNERSHIP" and granted_to == "ROLE":
+                    db_grants.append({"privilege": priv, "grantee": grantee})
+            result["steps"].append({"step": "CAPTURE_DB_GRANTS", "status": "SUCCESS", "detail": str(len(db_grants)) + " database-level grants captured"})
         except Exception as e:
-            result[warnings].append("Could not capture database grants: " + str(e)[:200])
+            result["warnings"].append("Could not capture database grants: " + str(e)[:200])
 
     # ============================================================
     # STEP 2: Build and execute the CLONE statement
     # ============================================================
     clone_sql = "CREATE DATABASE " + p_target_db + " CLONE " + p_source_db
 
-    if p_clone_mode == TIMESTAMP and p_timestamp:
+    if p_clone_mode == "TIMESTAMP" and p_timestamp:
         clone_sql += " AT (TIMESTAMP => " + q + p_timestamp + q + "::TIMESTAMP_LTZ)"
-    elif p_clone_mode == OFFSET and p_offset_seconds is not None:
+    elif p_clone_mode == "OFFSET" and p_offset_seconds is not None:
         clone_sql += " AT (OFFSET => " + str(int(p_offset_seconds * -1)) + ")"
-    elif p_clone_mode == STATEMENT and p_statement_id:
+    elif p_clone_mode == "STATEMENT" and p_statement_id:
         clone_sql += " BEFORE (STATEMENT => " + q + p_statement_id + q + ")"
 
     if p_ignore_insufficient_retention:
@@ -1123,12 +1180,12 @@ def run(session, p_source_db, p_target_db, p_target_env, p_clone_mode, p_timesta
 
     try:
         session.sql(clone_sql).collect()
-        result[steps].append({step: CLONE_DATABASE, status: SUCCESS, detail: clone_sql})
-        log(session, audit_id, user, CLONE_DATABASE, p_target_db, clone_sql, SUCCESS, "")
+        result["steps"].append({"step": "CLONE_DATABASE", "status": "SUCCESS", "detail": clone_sql})
+        log(session, audit_id, user, "CLONE_DATABASE", p_target_db, clone_sql, "SUCCESS", "")
     except Exception as e:
-        result[status] = FAILED
-        result[steps].append({step: CLONE_DATABASE, status: FAILED, detail: str(e)[:500]})
-        log(session, audit_id, user, CLONE_DATABASE, p_target_db, clone_sql, ERROR, str(e)[:200])
+        result["status"] = "FAILED"
+        result["steps"].append({"step": "CLONE_DATABASE", "status": "FAILED", "detail": str(e)[:500]})
+        log(session, audit_id, user, "CLONE_DATABASE", p_target_db, clone_sql, "ERROR", str(e)[:200])
         return result
 
     # ============================================================
@@ -1138,10 +1195,10 @@ def run(session, p_source_db, p_target_db, p_target_env, p_clone_mode, p_timesta
         try:
             env_roles = session.sql(
                 "SELECT ROLE_TEMPLATE, OWNS_DATABASES, OWNS_SCHEMAS, OWNS_DB_ROLES "
-                "FROM SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.ENVIRONMENT_ROLE_METADATA WHERE IS_ACTIVE = TRUE"
+                "FROM PRISM_SECURITY.ACCESS_CONTROL.ENVIRONMENT_ROLE_METADATA WHERE IS_ACTIVE = TRUE"
             ).collect()
-            db_owner = p_target_env + _SYSADMIN
-            db_role_owner = p_target_env + _USERADMIN
+            db_owner = p_target_env + "_SYSADMIN"
+            db_role_owner = p_target_env + "_USERADMIN"
             for er in env_roles:
                 rn = er[0].replace("<ENV>", p_target_env)
                 if er[1]: db_owner = rn
@@ -1149,18 +1206,28 @@ def run(session, p_source_db, p_target_db, p_target_env, p_clone_mode, p_timesta
 
             try:
                 session.sql("GRANT OWNERSHIP ON DATABASE " + p_target_db + " TO ROLE " + db_owner + " COPY CURRENT GRANTS").collect()
-                result[steps].append({step: TRANSFER_DB_OWNERSHIP, status: SUCCESS, detail: "To " + db_owner})
+                result["steps"].append({"step": "TRANSFER_DB_OWNERSHIP", "status": "SUCCESS", "detail": "To " + db_owner})
             except Exception as e:
-                result[warnings].append("DB ownership transfer: " + str(e)[:200])
+                result["warnings"].append("DB ownership transfer: " + str(e)[:200])
+
+            try:
+                session.sql("GRANT USAGE ON DATABASE " + p_target_db + " TO ROLE " + app_role).collect()
+                session.sql("GRANT CREATE SCHEMA ON DATABASE " + p_target_db + " TO ROLE " + app_role).collect()
+                session.sql("GRANT MONITOR ON DATABASE " + p_target_db + " TO ROLE " + app_role).collect()
+            except: pass
 
             try:
                 session.sql("GRANT OWNERSHIP ON ALL SCHEMAS IN DATABASE " + p_target_db + " TO ROLE " + db_owner + " COPY CURRENT GRANTS").collect()
-                result[steps].append({step: TRANSFER_SCHEMA_OWNERSHIP, status: SUCCESS, detail: "To " + db_owner})
+                result["steps"].append({"step": "TRANSFER_SCHEMA_OWNERSHIP", "status": "SUCCESS", "detail": "To " + db_owner})
             except Exception as e:
-                result[warnings].append("Schema ownership transfer: " + str(e)[:200])
+                result["warnings"].append("Schema ownership transfer: " + str(e)[:200])
+
+            try:
+                session.sql("GRANT USAGE ON ALL SCHEMAS IN DATABASE " + p_target_db + " TO ROLE " + app_role).collect()
+            except: pass
 
             profiles = session.sql(
-                "SELECT ROLE_SUFFIX FROM SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.ACCESS_PROFILES WHERE IS_ACTIVE = TRUE ORDER BY HIERARCHY_ORDER"
+                "SELECT ROLE_SUFFIX FROM PRISM_SECURITY.ACCESS_CONTROL.ACCESS_PROFILES WHERE IS_ACTIVE = TRUE ORDER BY HIERARCHY_ORDER"
             ).collect()
             for prof in profiles:
                 try:
@@ -1169,13 +1236,13 @@ def run(session, p_source_db, p_target_db, p_target_env, p_clone_mode, p_timesta
                     pass
 
             schemas = session.sql(
-                "SELECT SCHEMA_NAME FROM " + p_target_db + ".INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME NOT IN (" + q + PUBLIC + q + "," + q + INFORMATION_SCHEMA + q + ")"
+                "SELECT SCHEMA_NAME FROM " + p_target_db + ".INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME NOT IN (" + q + "PUBLIC" + q + "," + q + "INFORMATION_SCHEMA" + q + ")"
             ).collect()
             for s in schemas:
                 sname = s[0]
                 for prof in profiles:
                     try:
-                        session.sql("GRANT OWNERSHIP ON DATABASE ROLE " + p_target_db + "." + sname + _ + prof[0] + " TO ROLE " + db_role_owner + " COPY CURRENT GRANTS").collect()
+                        session.sql("GRANT OWNERSHIP ON DATABASE ROLE " + p_target_db + "." + sname + "_" + prof[0] + " TO ROLE " + db_role_owner + " COPY CURRENT GRANTS").collect()
                     except:
                         pass
                 try:
@@ -1183,10 +1250,10 @@ def run(session, p_source_db, p_target_db, p_target_env, p_clone_mode, p_timesta
                 except:
                     pass
 
-            result[steps].append({step: TRANSFER_ALL_OWNERSHIP, status: SUCCESS, detail: "DB roles to " + db_role_owner + ", DB/schemas to " + db_owner})
-            log(session, audit_id, user, CLONE_TRANSFER_OWNERSHIP, p_target_db, "Ownership transferred", SUCCESS, "")
+            result["steps"].append({"step": "TRANSFER_ALL_OWNERSHIP", "status": "SUCCESS", "detail": "DB roles to " + db_role_owner + ", DB/schemas to " + db_owner})
+            log(session, audit_id, user, "CLONE_TRANSFER_OWNERSHIP", p_target_db, "Ownership transferred", "SUCCESS", "")
         except Exception as e:
-            result[warnings].append("Ownership setup: " + str(e)[:200])
+            result["warnings"].append("Ownership setup: " + str(e)[:200])
 
     # ============================================================
     # STEP 4: Set up RBAC (privileges, hierarchy, future grants) on clone
@@ -1194,35 +1261,41 @@ def run(session, p_source_db, p_target_db, p_target_env, p_clone_mode, p_timesta
     if p_setup_rbac:
         try:
             profiles = session.sql(
-                "SELECT ACCESS_CODE, ROLE_SUFFIX FROM SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.ACCESS_PROFILES WHERE IS_ACTIVE = TRUE ORDER BY HIERARCHY_ORDER"
+                "SELECT ACCESS_CODE, ROLE_SUFFIX FROM PRISM_SECURITY.ACCESS_CONTROL.ACCESS_PROFILES WHERE IS_ACTIVE = TRUE ORDER BY HIERARCHY_ORDER"
             ).collect()
 
             def apply_privs(ac, suf):
-                session.call("SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SP_APPLY_PRIVILEGES", audit_id, suf, p_target_db, ac, user, DATABASE, "")
+                session.call("PRISM_SECURITY.ACCESS_CONTROL.SP_APPLY_PRIVILEGES", audit_id, suf, p_target_db, ac, user, "DATABASE", "")
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
                 futs = [ex.submit(apply_privs, p[0], p[1]) for p in profiles]
                 concurrent.futures.wait(futs)
 
-            session.call("SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SP_SET_DB_ROLE_OWNERSHIP", audit_id, p_target_db, p_target_db, p_target_env, user)
-            session.call("SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SP_GRANT_USAGE_ON_DATABASE_AND_SCHEMAS", audit_id, p_target_db, "", user)
-            session.call("SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SP_GRANT_FUTURE_OBJECT_OWNERSHIP_IN_DATABASE", audit_id, p_target_db, db_role_owner, [], user)
+            session.call("PRISM_SECURITY.ACCESS_CONTROL.SP_SET_DB_ROLE_OWNERSHIP", audit_id, p_target_db, p_target_db, p_target_env, user)
+            session.call("PRISM_SECURITY.ACCESS_CONTROL.SP_GRANT_USAGE_ON_DATABASE_AND_SCHEMAS", audit_id, p_target_db, "", user)
+            try:
+                obj_types = session.sql("SELECT DISTINCT OBJECT_TYPE_PLURAL FROM PRISM_SECURITY.ACCESS_CONTROL.SNOWFLAKE_PRIVILEGE_CATALOG WHERE PARENT_SCOPE = " + q + "SCHEMA" + q + " AND SUPPORTS_FUTURE = TRUE").collect()
+                for ot in obj_types:
+                    try:
+                        session.sql("GRANT OWNERSHIP ON FUTURE " + ot[0] + " IN DATABASE " + p_target_db + " TO ROLE " + db_role_owner + " COPY CURRENT GRANTS").collect()
+                    except: pass
+            except: pass
 
             for s in schemas:
                 sname = s[0]
                 for prof in profiles:
-                    srn = sname + _ + prof[1]
+                    srn = sname + "_" + prof[1]
                     try:
-                        session.call("SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SP_APPLY_PRIVILEGES", audit_id, srn, p_target_db, prof[0], user, SCHEMA, sname)
+                        session.call("PRISM_SECURITY.ACCESS_CONTROL.SP_APPLY_PRIVILEGES", audit_id, srn, p_target_db, prof[0], user, "SCHEMA", sname)
                     except:
                         pass
-                session.call("SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SP_SET_SCHEMA_ROLE_HIERARCHY", audit_id, p_target_db, sname, p_target_env, user)
-                session.call("SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.SP_GRANT_SCHEMA_ROLES_TO_DB_ROLES", audit_id, p_target_db, sname, user)
+                session.call("PRISM_SECURITY.ACCESS_CONTROL.SP_SET_SCHEMA_ROLE_HIERARCHY", audit_id, p_target_db, sname, p_target_env, user)
+                session.call("PRISM_SECURITY.ACCESS_CONTROL.SP_GRANT_SCHEMA_ROLES_TO_DB_ROLES", audit_id, p_target_db, sname, user)
 
-            result[steps].append({step: SETUP_RBAC, status: SUCCESS, detail: "Privileges, hierarchy, and future grants configured"})
-            log(session, audit_id, user, CLONE_SETUP_RBAC, p_target_db, "RBAC setup complete", SUCCESS, "")
+            result["steps"].append({"step": "SETUP_RBAC", "status": "SUCCESS", "detail": "Privileges, hierarchy, and future grants configured"})
+            log(session, audit_id, user, "CLONE_SETUP_RBAC", p_target_db, "RBAC setup complete", "SUCCESS", "")
         except Exception as e:
-            result[warnings].append("RBAC setup: " + str(e)[:200])
+            result["warnings"].append("RBAC setup: " + str(e)[:200])
 
     # ============================================================
     # STEP 5: Reattach account roles to cloned database roles
@@ -1230,29 +1303,29 @@ def run(session, p_source_db, p_target_db, p_target_env, p_clone_mode, p_timesta
     restored_count = 0
     if p_reattach_roles and role_mappings:
         for mapping in role_mappings:
-            db_role = mapping[db_role]
-            account_role = mapping[account_role]
+            db_role = mapping["db_role"]
+            account_role = mapping["account_role"]
             try:
                 grant_sql = "GRANT DATABASE ROLE " + p_target_db + "." + db_role + " TO ROLE " + account_role
                 session.sql(grant_sql).collect()
                 restored_count += 1
-                log(session, audit_id, user, CLONE_REATTACH_ROLE, db_role, grant_sql, SUCCESS, "")
+                log(session, audit_id, user, "CLONE_REATTACH_ROLE", db_role, grant_sql, "SUCCESS", "")
             except Exception as e:
-                result[warnings].append("Reattach " + db_role + " -> " + account_role + ": " + str(e)[:100])
-                log(session, audit_id, user, CLONE_REATTACH_ROLE, db_role, "GRANT DB ROLE " + db_role + " TO " + account_role, ERROR, str(e)[:200])
+                result["warnings"].append("Reattach " + db_role + " -> " + account_role + ": " + str(e)[:100])
+                log(session, audit_id, user, "CLONE_REATTACH_ROLE", db_role, "GRANT DB ROLE " + db_role + " TO " + account_role, "ERROR", str(e)[:200])
 
-        result[role_mappings_restored] = restored_count
-        result[steps].append({step: REATTACH_ROLES, status: SUCCESS, detail: str(restored_count) + "/" + str(len(role_mappings)) + " role mappings restored"})
+        result["role_mappings_restored"] = restored_count
+        result["steps"].append({"step": "REATTACH_ROLES", "status": "SUCCESS", "detail": str(restored_count) + "/" + str(len(role_mappings)) + " role mappings restored"})
 
     # Also restore database-level grants
     if p_reattach_roles and db_grants:
         for g in db_grants:
             try:
-                session.sql("GRANT " + g[privilege] + " ON DATABASE " + p_target_db + " TO ROLE " + g[grantee]).collect()
+                session.sql("GRANT " + g["privilege"] + " ON DATABASE " + p_target_db + " TO ROLE " + g["grantee"]).collect()
             except:
                 pass
 
-    log(session, audit_id, user, CLONE_COMPLETE, p_target_db, json.dumps(result, default=str), SUCCESS, "")
+    log(session, audit_id, user, "CLONE_COMPLETE", p_target_db, json.dumps(result, default=str), "SUCCESS", "")
     return result
 
 def log(session, p_id, user, event_type, obj, sql_cmd, status, msg):
@@ -1260,7 +1333,7 @@ def log(session, p_id, user, event_type, obj, sql_cmd, status, msg):
     try:
         s = sql_cmd.replace(q, q+q)[:500]
         m = msg.replace(q, q+q)[:200]
-        session.sql("INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (" + str(p_id) + ", CURRENT_TIMESTAMP(), " + q + user + q + ", " + q + event_type + q + ", " + q + obj + q + ", " + q + s + q + ", " + q + status + q + ", " + q + m + q + ")").collect()
+        session.sql("INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (" + str(p_id) + ", CURRENT_TIMESTAMP(), " + q + user + q + ", " + q + event_type + q + ", " + q + obj + q + ", " + q + s + q + ", " + q + status + q + ", " + q + m + q + ")").collect()
     except:
         pass
 ';
@@ -1277,19 +1350,19 @@ AS 'import json
 
 def run(session, p_env, p_wh_type, p_wh_size, p_wh_class, p_custom_name, p_auto_suspend, p_auto_resume, p_initially_suspended, p_min_clusters, p_max_clusters, p_scaling_policy, p_enable_qa, p_qa_scale, p_stmt_timeout, p_queued_timeout, p_max_concurrency, p_resource_monitor, p_comment, p_grant_roles):
     q = chr(39)
-    result = {status: SUCCESS, warehouse_name: "", sql: "", grants: [], warnings: []}
+    result = {"status": "SUCCESS", "warehouse_name": "", "sql": "", "grants": [], "warnings": []}
     import re
     id_pattern = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-    for pn, pv in [(env, p_env), (type, p_wh_type), (size, p_wh_size)]:
+    for pn, pv in [("env", p_env), ("type", p_wh_type), ("size", p_wh_size)]:
         if not id_pattern.match(str(pv)):
-            result[status] = FAILED
-            result[warnings].append("Invalid identifier: " + pn)
+            result["status"] = "FAILED"
+            result["warnings"].append("Invalid identifier: " + pn)
             return result
     user = session.sql("SELECT CURRENT_USER()").collect()[0][0]
-    audit_id = session.sql("SELECT OPERATIONS_UNDER_DEVELOPMENT.LOGS.SEQ_AUDIT_LOG.NEXTVAL").collect()[0][0]
+    audit_id = session.sql("SELECT PRISM_OPERATIONS.LOGS.SEQ_AUDIT_LOG.NEXTVAL").collect()[0][0]
 
     meta = session.sql(
-        "SELECT * FROM SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.WAREHOUSE_METADATA "
+        "SELECT * FROM PRISM_SECURITY.ACCESS_CONTROL.WAREHOUSE_METADATA "
         "WHERE WAREHOUSE_TYPE = " + q + str(p_wh_type) + q + " "
         "AND WAREHOUSE_SIZE = " + q + str(p_wh_size) + q + " "
         "AND WAREHOUSE_CLASS = " + q + str(p_wh_class) + q + " "
@@ -1297,42 +1370,42 @@ def run(session, p_env, p_wh_type, p_wh_size, p_wh_class, p_custom_name, p_auto_
     ).collect()
 
     if not meta:
-        result[status] = FAILED
-        result[warnings].append("No matching warehouse metadata found for " + p_wh_type + "/" + p_wh_size + "/" + p_wh_class)
+        result["status"] = "FAILED"
+        result["warnings"].append("No matching warehouse metadata found for " + p_wh_type + "/" + p_wh_size + "/" + p_wh_class)
         return result
 
     m = meta[0]
-    pattern = m[WAREHOUSE_NAME_PATTERN]
+    pattern = m["WAREHOUSE_NAME_PATTERN"]
     wh_name = pattern.replace("<ENV>", p_env).replace("<TYPE>", p_wh_type).replace("<SIZE>", p_wh_size)
     if p_custom_name:
         wh_name = wh_name.replace("<TYPE>", p_custom_name)
         if "<CUSTOM>" in wh_name:
             wh_name = wh_name.replace("<CUSTOM>", p_custom_name)
 
-    auto_suspend = p_auto_suspend if p_auto_suspend is not None else m[DEFAULT_AUTO_SUSPEND_SECS]
-    auto_resume = p_auto_resume if p_auto_resume is not None else m[DEFAULT_AUTO_RESUME]
-    init_susp = p_initially_suspended if p_initially_suspended is not None else m[DEFAULT_INITIALLY_SUSPENDED]
-    min_cl = p_min_clusters if p_min_clusters is not None else m[DEFAULT_MIN_CLUSTER_COUNT]
-    max_cl = p_max_clusters if p_max_clusters is not None else m[DEFAULT_MAX_CLUSTER_COUNT]
-    scaling = p_scaling_policy if p_scaling_policy else m[DEFAULT_SCALING_POLICY]
-    enable_qa = p_enable_qa if p_enable_qa is not None else m[DEFAULT_ENABLE_QUERY_ACCELERATION]
-    qa_scale = p_qa_scale if p_qa_scale is not None else m[DEFAULT_QUERY_ACCEL_MAX_SCALE]
-    stmt_to = p_stmt_timeout if p_stmt_timeout is not None else m[DEFAULT_STATEMENT_TIMEOUT_SECS]
-    q_to = p_queued_timeout if p_queued_timeout is not None else m[DEFAULT_STMT_QUEUED_TIMEOUT_SECS]
-    max_conc = p_max_concurrency if p_max_concurrency is not None else m[DEFAULT_MAX_CONCURRENCY_LEVEL]
-    res_mon = p_resource_monitor if p_resource_monitor else (m[DEFAULT_RESOURCE_MONITOR] if m[DEFAULT_RESOURCE_MONITOR] else None)
-    comment = p_comment if p_comment else (m[DEFAULT_COMMENT] if m[DEFAULT_COMMENT] else "")
+    auto_suspend = p_auto_suspend if p_auto_suspend is not None else m["DEFAULT_AUTO_SUSPEND_SECS"]
+    auto_resume = p_auto_resume if p_auto_resume is not None else m["DEFAULT_AUTO_RESUME"]
+    init_susp = p_initially_suspended if p_initially_suspended is not None else m["DEFAULT_INITIALLY_SUSPENDED"]
+    min_cl = p_min_clusters if p_min_clusters is not None else m["DEFAULT_MIN_CLUSTER_COUNT"]
+    max_cl = p_max_clusters if p_max_clusters is not None else m["DEFAULT_MAX_CLUSTER_COUNT"]
+    scaling = p_scaling_policy if p_scaling_policy else m["DEFAULT_SCALING_POLICY"]
+    enable_qa = p_enable_qa if p_enable_qa is not None else m["DEFAULT_ENABLE_QUERY_ACCELERATION"]
+    qa_scale = p_qa_scale if p_qa_scale is not None else m["DEFAULT_QUERY_ACCEL_MAX_SCALE"]
+    stmt_to = p_stmt_timeout if p_stmt_timeout is not None else m["DEFAULT_STATEMENT_TIMEOUT_SECS"]
+    q_to = p_queued_timeout if p_queued_timeout is not None else m["DEFAULT_STMT_QUEUED_TIMEOUT_SECS"]
+    max_conc = p_max_concurrency if p_max_concurrency is not None else m["DEFAULT_MAX_CONCURRENCY_LEVEL"]
+    res_mon = p_resource_monitor if p_resource_monitor else (m["DEFAULT_RESOURCE_MONITOR"] if m["DEFAULT_RESOURCE_MONITOR"] else None)
+    comment = p_comment if p_comment else (m["DEFAULT_COMMENT"] if m["DEFAULT_COMMENT"] else "")
 
     sql = "CREATE WAREHOUSE IF NOT EXISTS " + wh_name
     sql += " WITH WAREHOUSE_SIZE = " + q + str(p_wh_size) + q
     sql += " WAREHOUSE_TYPE = " + q + str(p_wh_class) + q
     sql += " AUTO_SUSPEND = " + str(int(auto_suspend))
-    sql += " AUTO_RESUME = " + (TRUE if auto_resume else FALSE)
-    sql += " INITIALLY_SUSPENDED = " + (TRUE if init_susp else FALSE)
+    sql += " AUTO_RESUME = " + ("TRUE" if auto_resume else "FALSE")
+    sql += " INITIALLY_SUSPENDED = " + ("TRUE" if init_susp else "FALSE")
     sql += " MIN_CLUSTER_COUNT = " + str(int(min_cl))
     sql += " MAX_CLUSTER_COUNT = " + str(int(max_cl))
     sql += " SCALING_POLICY = " + q + str(scaling) + q
-    sql += " ENABLE_QUERY_ACCELERATION = " + (TRUE if enable_qa else FALSE)
+    sql += " ENABLE_QUERY_ACCELERATION = " + ("TRUE" if enable_qa else "FALSE")
 
     if enable_qa:
         sql += " QUERY_ACCELERATION_MAX_SCALE_FACTOR = " + str(int(qa_scale))
@@ -1348,16 +1421,16 @@ def run(session, p_env, p_wh_type, p_wh_size, p_wh_class, p_custom_name, p_auto_
         safe_comment = comment.replace(q, q+q)
         sql += " COMMENT = " + q + safe_comment + q
 
-    result[warehouse_name] = wh_name
-    result[sql] = sql
+    result["warehouse_name"] = wh_name
+    result["sql"] = sql
 
     try:
         session.sql(sql).collect()
-        log(session, audit_id, user, CREATE_WAREHOUSE, wh_name, sql, SUCCESS, "")
+        log(session, audit_id, user, "CREATE_WAREHOUSE", wh_name, sql, "SUCCESS", "")
     except Exception as e:
-        result[status] = FAILED
-        result[warnings].append("Create failed: " + str(e)[:300])
-        log(session, audit_id, user, CREATE_WAREHOUSE, wh_name, sql, ERROR, str(e)[:200])
+        result["status"] = "FAILED"
+        result["warnings"].append("Create failed: " + str(e)[:300])
+        log(session, audit_id, user, "CREATE_WAREHOUSE", wh_name, sql, "ERROR", str(e)[:200])
         return result
 
     if p_grant_roles:
@@ -1365,23 +1438,23 @@ def run(session, p_env, p_wh_type, p_wh_size, p_wh_class, p_custom_name, p_auto_
             try:
                 grant_sql = "GRANT USAGE ON WAREHOUSE " + wh_name + " TO ROLE " + str(role)
                 session.sql(grant_sql).collect()
-                result[grants].append({role: str(role), status: SUCCESS})
-                log(session, audit_id, user, GRANT_WAREHOUSE, wh_name + " TO " + str(role), grant_sql, SUCCESS, "")
+                result["grants"].append({"role": str(role), "status": "SUCCESS"})
+                log(session, audit_id, user, "GRANT_WAREHOUSE", wh_name + " TO " + str(role), grant_sql, "SUCCESS", "")
 
                 operate_sql = "GRANT OPERATE ON WAREHOUSE " + wh_name + " TO ROLE " + str(role)
                 session.sql(operate_sql).collect()
             except Exception as e:
-                result[grants].append({role: str(role), status: ERROR, message: str(e)[:100]})
+                result["grants"].append({"role": str(role), "status": "ERROR", "message": str(e)[:100]})
 
     env_roles = session.sql(
-        "SELECT ROLE_TEMPLATE FROM SECURITY_UNDER_DEVELOPMENT.ACCESS_CONTROL.ENVIRONMENT_ROLE_METADATA WHERE IS_ACTIVE = TRUE"
+        "SELECT ROLE_TEMPLATE FROM PRISM_SECURITY.ACCESS_CONTROL.ENVIRONMENT_ROLE_METADATA WHERE IS_ACTIVE = TRUE"
     ).collect()
     for er in env_roles:
         rn = er[0].replace("<ENV>", p_env)
         try:
             session.sql("GRANT USAGE ON WAREHOUSE " + wh_name + " TO ROLE " + rn).collect()
             session.sql("GRANT OPERATE ON WAREHOUSE " + wh_name + " TO ROLE " + rn).collect()
-            result[grants].append({role: rn, status: SUCCESS})
+            result["grants"].append({"role": rn, "status": "SUCCESS"})
         except:
             pass
 
@@ -1389,14 +1462,14 @@ def run(session, p_env, p_wh_type, p_wh_size, p_wh_class, p_custom_name, p_auto_
         db_owner = None
         for er in env_roles:
             rn = er[0].replace("<ENV>", p_env)
-            if SYSADMIN in er[0]:
+            if "SYSADMIN" in er[0]:
                 db_owner = rn
                 break
         if db_owner:
             session.sql("GRANT OWNERSHIP ON WAREHOUSE " + wh_name + " TO ROLE " + db_owner + " COPY CURRENT GRANTS").collect()
-            result[grants].append({role: db_owner, status: OWNERSHIP})
+            result["grants"].append({"role": db_owner, "status": "OWNERSHIP"})
     except Exception as e:
-        result[warnings].append("Ownership transfer: " + str(e)[:100])
+        result["warnings"].append("Ownership transfer: " + str(e)[:100])
 
     return result
 
@@ -1405,7 +1478,7 @@ def log(session, p_id, user, event_type, obj, sql_cmd, status, msg):
     try:
         s = sql_cmd.replace(q, q+q)[:500]
         m = msg.replace(q, q+q)[:200]
-        session.sql("INSERT INTO OPERATIONS_UNDER_DEVELOPMENT.LOGS.AUDIT_LOG VALUES (" + str(p_id) + ", CURRENT_TIMESTAMP(), " + q + user + q + ", " + q + event_type + q + ", " + q + obj + q + ", " + q + s + q + ", " + q + status + q + ", " + q + m + q + ")").collect()
+        session.sql("INSERT INTO PRISM_OPERATIONS.LOGS.AUDIT_LOG VALUES (" + str(p_id) + ", CURRENT_TIMESTAMP(), " + q + user + q + ", " + q + event_type + q + ", " + q + obj + q + ", " + q + s + q + ", " + q + status + q + ", " + q + m + q + ")").collect()
     except:
         pass
 ';
@@ -1426,18 +1499,18 @@ def get_system_prompt(mode):
     dq = chr(34)
     br = chr(123)
     cbr = chr(125)
-    if mode == COMMAND:
+    if mode == "COMMAND":
         return "You are PRISM AI, the command interface for a Snowflake RBAC management application. Parse the user request and return ONLY a JSON object with: action, params, confirmation_message. VALID ACTIONS AND REQUIRED PARAMS: CREATE_DATABASE(env, db_name, schemas), CLONE_DATABASE(source_db, target_db, target_env, clone_mode), CREATE_WAREHOUSE(env, wh_type, wh_size, wh_class), CREATE_ROLE(env, function_name, role_type, db_name, access_level), SETUP_ENVIRONMENT(env), CREATE_TAG(tag_name, comment), APPLY_TAG(target_type, target_fqn, tag_name, tag_value, column_name), CREATE_MASKING_POLICY(policy_name, data_type, template, authorized_role), APPLY_MASKING_POLICY(table_fqn, column_name, policy_name), ASSIGN_ROLE(role_to_grant, target_role), REVOKE_ROLE(role_to_revoke, from_role), ASSIGN_DB_ROLE(db_name, db_role_suffix, target_role), DELETE_DATABASE(env, db_name), GRANT_WAREHOUSE(warehouse_name, role). ENVIRONMENTS: DEV, SIT, UAT, PROD, LAB. WH_TYPES: GEN, ETL, DATALOADER, ANALYTICS, ML, AI, BI, STREAMLIT. WH_SIZES: XSMALL, SMALL, MEDIUM, LARGE, XLARGE. WH_CLASS: STANDARD, SNOWPARK-OPTIMIZED. ROLE_TYPES: Functional, Technical. ACCESS_LEVELS: RO_AR, RW_AR, FULL_AR, DBA_AR, OWN_AR, DO_AR, GOV_AR, SVC_AR. MASKING_TEMPLATES: FULL_MASK, PARTIAL_EMAIL, LAST_4_DIGITS, SHA256_HASH, NULL_MASK, DATE_YEAR_ONLY. Return ONLY valid JSON, no explanation."
-    elif mode == FORM_FILL:
+    elif mode == "FORM_FILL":
         return "You are PRISM AI. Extract parameters from the user description for a Snowflake operation. Return ONLY a JSON object with extracted values. Keys should be lowercase."
-    elif mode == RECOMMEND:
+    elif mode == "RECOMMEND":
         return "You are PRISM AI. Analyze the provided data and return recommendations as a JSON array. Each item must have: recommendation (text), priority (HIGH/MEDIUM/LOW), action (suggested action). CRITICAL RULES: 1) NEVER recommend removing, merging, or restructuring existing roles - the hierarchy is intentional. 2) Focus ONLY on: missing privileges, over-provisioned privileges, unused capabilities, security gaps. 3) Each role serves a distinct purpose - DO is for operations, GOV is for governance, RW is for data writes, SVC is for services. They are NOT redundant. Return ONLY a valid JSON array."
     else:
         return "You are PRISM AI Governance Assistant for Snowflake. Answer questions about RBAC, access profiles, masking policies, tags, and governance. Use the provided context to give accurate, concise answers. If unsure, say so."
 
 def run(session, p_mode, p_user_input, p_context):
     q = chr(39)
-    result = {status: SUCCESS, response: "", model_used: "", ai_available: True}
+    result = {"status": "SUCCESS", "response": "", "model_used": "", "ai_available": True}
 
     system_prompt = get_system_prompt(p_mode)
     full_prompt = ("Context: " + p_context + " User request: " + p_user_input) if p_context else p_user_input
@@ -1448,35 +1521,35 @@ def run(session, p_mode, p_user_input, p_context):
         try:
             sql = ("SELECT AI_COMPLETE(" + q + model + q + ", "
                 "ARRAY_CONSTRUCT("
-                "OBJECT_CONSTRUCT(" + q + role + q + ", " + q + system + q + ", " + q + content + q + ", " + q + safe_sys + q + "), "
-                "OBJECT_CONSTRUCT(" + q + role + q + ", " + q + user + q + ", " + q + content + q + ", " + q + safe_prompt + q + ")"
-                "), OBJECT_CONSTRUCT(" + q + temperature + q + ", 0.1, " + q + max_tokens + q + ", 2048))")
+                "OBJECT_CONSTRUCT(" + q + "role" + q + ", " + q + "system" + q + ", " + q + "content" + q + ", " + q + safe_sys + q + "), "
+                "OBJECT_CONSTRUCT(" + q + "role" + q + ", " + q + "user" + q + ", " + q + "content" + q + ", " + q + safe_prompt + q + ")"
+                "), OBJECT_CONSTRUCT(" + q + "temperature" + q + ", 0.1, " + q + "max_tokens" + q + ", 2048))")
             response = session.sql(sql).collect()
             if response and response[0][0]:
                 raw = response[0][0]
                 try:
                     parsed = json.loads(raw) if isinstance(raw, str) else raw
-                    choices = parsed.get(choices, []) if isinstance(parsed, dict) else []
+                    choices = parsed.get("choices", []) if isinstance(parsed, dict) else []
                     if choices:
-                        result[response] = choices[0].get(messages, str(raw))
+                        result["response"] = choices[0].get("messages", str(raw))
                     else:
-                        result[response] = str(raw)
+                        result["response"] = str(raw)
                 except:
-                    result[response] = str(raw)
-                result[model_used] = model
+                    result["response"] = str(raw)
+                result["model_used"] = model
                 return result
         except Exception as e:
             err = str(e)
-            if "not available" in err.lower() or "not supported" in err.lower() or region in err.lower():
+            if "not available" in err.lower() or "not supported" in err.lower() or "region" in err.lower():
                 continue
-            result[response] = "AI processing error with model " + model
-            result[model_used] = model
-            result[status] = ERROR
+            result["response"] = "AI processing error with model " + model
+            result["model_used"] = model
+            result["status"] = "ERROR"
             return result
 
-    result[ai_available] = False
-    result[status] = UNAVAILABLE
-    result[response] = "AI models are not available in your current Snowflake region. Cortex LLM functions require specific regions. Check Snowflake docs for regional availability."
+    result["ai_available"] = False
+    result["status"] = "UNAVAILABLE"
+    result["response"] = "AI models are not available in your current Snowflake region. Cortex LLM functions require specific regions. Check Snowflake docs for regional availability."
     return result
 ';
 
@@ -1492,12 +1565,12 @@ AS 'def run(session, p_user):
     try:
         grants = session.sql("SHOW GRANTS TO USER " + p_user).collect()
         for g in grants:
-            if str(g[3]) == PRISM_GOV_ROLE:
+            if str(g[3]) == "PRISM_GOV_ROLE":
                 return True
             try:
                 role_grants = session.sql("SHOW GRANTS TO ROLE " + str(g[3])).collect()
                 for rg in role_grants:
-                    if str(rg[3]) == PRISM_GOV_ROLE:
+                    if str(rg[3]) == "PRISM_GOV_ROLE":
                         return True
             except:
                 pass
