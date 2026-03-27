@@ -2417,17 +2417,17 @@ def ui_audit_logs():
     # Fetch audit log data
     query = f"""
     SELECT 
-        EVENT_ID,
-        EVENT_TIME,
+        AUDIT_ID,
+        EXECUTED_AT,
         INVOKED_BY,
         EVENT_TYPE,
-        OBJECT_NAME,
+        TARGET_OBJECT,
         SQL_COMMAND,
         STATUS,
         MESSAGE
     FROM {AUDIT_LOG_TABLE}
-    WHERE EVENT_TIME BETWEEN '{start_ts}' AND '{end_ts}'
-    ORDER BY EVENT_TIME DESC
+    WHERE EXECUTED_AT BETWEEN '{start_ts}' AND '{end_ts}'
+    ORDER BY EXECUTED_AT DESC
     """
 
     try:
@@ -2497,7 +2497,7 @@ def ui_audit_logs():
 
             # Event Timeline
             st.markdown("### 📈 Event Timeline")
-            df['DATE'] = pd.to_datetime(df['EVENT_TIME']).dt.date
+            df['DATE'] = pd.to_datetime(df['EXECUTED_AT']).dt.date
             daily_events = df.groupby(['DATE', 'STATUS']).size().unstack(fill_value=0)
             
             fig = go.Figure()
@@ -2546,7 +2546,7 @@ def ui_audit_logs():
             
             # Calculate event statistics
             event_stats = df.groupby('SIMPLIFIED_EVENT').agg({
-                'EVENT_ID': 'count',
+                'AUDIT_ID': 'count',
                 'STATUS': lambda x: (x == 'SUCCESS').mean() * 100
             }).round(2)
             
@@ -2639,7 +2639,7 @@ def ui_audit_logs():
             user_daily_activity = df.pivot_table(
                 index='INVOKED_BY',
                 columns='DATE',
-                values='EVENT_ID',
+                values='AUDIT_ID',
                 aggfunc='count',
                 fill_value=0
             )
@@ -2753,13 +2753,13 @@ def ui_audit_logs():
             # Display detailed logs
             st.dataframe(
                 filtered_df[[
-                    'EVENT_TIME',
+                    'EXECUTED_AT',
                     'INVOKED_BY',
                     'SIMPLIFIED_EVENT',
-                    'OBJECT_NAME',
+                    'TARGET_OBJECT',
                     'STATUS',
                     'MESSAGE'
-                ]].sort_values('EVENT_TIME', ascending=False),
+                ]].sort_values('EXECUTED_AT', ascending=False),
                 hide_index=True,
                 use_container_width=True
             )
